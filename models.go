@@ -112,6 +112,106 @@ type SchoolResult struct {
 	Name string `json:"name"`
 }
 
+// --- Group types ---
+
+type Group struct {
+	URN         string `json:"urn"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MemberCount int    `json:"memberCount,omitempty"`
+	GroupURL    string `json:"groupUrl,omitempty"`
+	LogoURL     string `json:"logoUrl,omitempty"`
+	Rules       string `json:"rules,omitempty"`
+	IsPrivate   bool   `json:"isPrivate,omitempty"`
+	IsMember    bool   `json:"isMember,omitempty"`
+}
+
+type GroupPost struct {
+	URN          string `json:"urn"`
+	AuthorURN    string `json:"authorUrn,omitempty"`
+	AuthorName   string `json:"authorName,omitempty"`
+	Text         string `json:"text"`
+	CreatedAt    int64  `json:"createdAt,omitempty"`
+	LikeCount    int    `json:"likeCount,omitempty"`
+	CommentCount int    `json:"commentCount,omitempty"`
+}
+
+type GroupMember struct {
+	URN        string `json:"urn"`
+	ProfileURN string `json:"profileUrn"`
+	FirstName  string `json:"firstName"`
+	LastName   string `json:"lastName"`
+	Headline   string `json:"headline,omitempty"`
+	Role       string `json:"role,omitempty"`
+}
+
+type GroupSearchParams struct {
+	Keywords string
+	Start    int
+	Count    int // default 10, max 49
+}
+
+type GroupPostParams struct {
+	GroupID string
+	Start   int
+	Count   int
+	SortBy  string // "RECENT" or "TOP", default "RECENT"
+}
+
+type GroupMemberParams struct {
+	GroupID string
+	Start   int
+	Count   int
+	Role    string // "OWNER", "MANAGER", "MEMBER", or empty for all
+}
+
+type CreateGroupPostParams struct {
+	GroupID string
+	Text    string
+}
+
+// --- Messaging types ---
+
+type Conversation struct {
+	URN            string        `json:"urn"`
+	Participants   []Participant `json:"participants,omitempty"`
+	LastMessage    *Message      `json:"lastMessage,omitempty"`
+	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
+	Unread         bool          `json:"unread,omitempty"`
+}
+
+type Participant struct {
+	URN       string `json:"urn"`
+	FirstName string `json:"firstName,omitempty"`
+	LastName  string `json:"lastName,omitempty"`
+	Headline  string `json:"headline,omitempty"`
+}
+
+type Message struct {
+	URN       string `json:"urn"`
+	Body      string `json:"body"`
+	SenderURN string `json:"senderUrn,omitempty"`
+	SentAt    int64  `json:"sentAt,omitempty"`
+}
+
+type ConversationParams struct {
+	Start int
+	Count int // default 20
+}
+
+type MessageListParams struct {
+	ConversationURN string // required
+	Start           int
+	Count           int // default 20
+}
+
+type SendMessageParams struct {
+	ConversationURN string   // existing thread (mutually exclusive with Recipients)
+	Recipients      []string // profile URNs for new conversation
+	Body            string   // plain text
+}
+
 // --- Internal API response types (unexported) ---
 
 // flexText handles LinkedIn fields that can be a string or {"text":"..."}.
@@ -286,12 +386,61 @@ type dateResponse struct {
 	Month int `json:"month,omitempty"`
 }
 
+// --- Messaging API response types ---
+
+type conversationListResponse struct {
+	Elements []conversationElement `json:"elements"`
+	Paging   apiPaging             `json:"paging"`
+}
+
+type conversationElement struct {
+	EntityURN      string               `json:"entityUrn"`
+	LastActivityAt int64                `json:"lastActivityAt"`
+	Read           bool                 `json:"read"`
+	Participants   []participantElement `json:"participants"`
+	Events         []messageEvent       `json:"events"`
+}
+
+type participantElement struct {
+	ParticipantType struct {
+		Member *struct {
+			EntityURN string `json:"entityUrn"`
+			FirstName string `json:"firstName"`
+			LastName  string `json:"lastName"`
+			Headline  string `json:"headline"`
+		} `json:"member"`
+	} `json:"com.linkedin.voyager.messaging.MessagingMember"`
+	MiniProfile *miniProfileResponse `json:"miniProfile,omitempty"`
+}
+
+type miniProfileResponse struct {
+	EntityURN  string `json:"entityUrn"`
+	FirstName  string `json:"firstName"`
+	LastName   string `json:"lastName"`
+	Occupation string `json:"occupation"`
+}
+
+type messageEvent struct {
+	EntityURN    string        `json:"entityUrn"`
+	CreatedAt    int64         `json:"createdAt"`
+	From         string        `json:"*from,omitempty"`
+	EventContent *eventContent `json:"eventContent,omitempty"`
+}
+
+type eventContent struct {
+	MessageEvent *messageBody `json:"com.linkedin.voyager.messaging.event.MessageEvent,omitempty"`
+}
+
+type messageBody struct {
+	Body string `json:"body"`
+}
+
 // Entity type constants
 const (
-	typeProfile      = "com.linkedin.voyager.dash.identity.profile.Profile"
-	typePosition     = "com.linkedin.voyager.dash.identity.profile.Position"
-	typeEducation    = "com.linkedin.voyager.dash.identity.profile.Education"
-	typeSkill        = "com.linkedin.voyager.dash.identity.profile.treasury.EndorsedSkill"
+	typeProfile       = "com.linkedin.voyager.dash.identity.profile.Profile"
+	typePosition      = "com.linkedin.voyager.dash.identity.profile.Position"
+	typeEducation     = "com.linkedin.voyager.dash.identity.profile.Education"
+	typeSkill         = "com.linkedin.voyager.dash.identity.profile.treasury.EndorsedSkill"
 	typeCertification = "com.linkedin.voyager.dash.identity.profile.Certification"
-	typeEntityResult = "com.linkedin.voyager.dash.search.EntityResultViewModel"
+	typeEntityResult  = "com.linkedin.voyager.dash.search.EntityResultViewModel"
 )
