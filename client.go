@@ -68,6 +68,8 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	req.Header.Set("csrf-token", c.auth.CSRF)
 	req.Header.Set("x-li-lang", "en_US")
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
+	req.Header.Set("x-li-track", `{"clientVersion":"1.13.9814","mpVersion":"1.13.9814","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
+	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_search_srp_people;0")
 	// Set cookies via raw header to preserve JSESSIONID quotes that
 	// Go's http.Cookie sanitizer would strip.
 	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))

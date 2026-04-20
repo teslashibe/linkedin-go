@@ -60,7 +60,7 @@ func (c *Client) resolveTypeahead(ctx context.Context, query, taType string) ([]
 		return nil, fmt.Errorf("%w: query required", ErrInvalidParams)
 	}
 
-	reqURL := fmt.Sprintf("%s/typeahead/hitsV2?keywords=%s&origin=GLOBAL_SEARCH_HEADER&q=type&type=%s",
+	reqURL := fmt.Sprintf("%s/graphql?variables=(query:%s,types:List(%s),count:10)&queryId=voyagerSearchDashReusableTypeahead.57a4fa600f3f5f0c5950200a105f64cf",
 		apiBase, url.QueryEscape(query), taType)
 
 	body, err := c.makeRequest(ctx, reqURL)
@@ -93,14 +93,18 @@ func (c *Client) resolveTypeahead(ctx context.Context, query, taType string) ([]
 	if err := json.Unmarshal(body, &inclResp); err == nil && len(inclResp.Included) > 0 {
 		hits := make([]typeaheadHit, 0, len(inclResp.Included))
 		for _, ent := range inclResp.Included {
-			if ent.EntityURN == "" {
+			urn := ent.TargetURN
+			if urn == "" {
+				urn = ent.EntityURN
+			}
+			if urn == "" {
 				continue
 			}
 			name := ent.Name
 			if name == "" && ent.Title != nil {
 				name = ent.Title.Text
 			}
-			hits = append(hits, typeaheadHit{urn: ent.EntityURN, name: name})
+			hits = append(hits, typeaheadHit{urn: urn, name: name})
 		}
 		if len(hits) > 0 {
 			return hits, nil
@@ -136,6 +140,7 @@ type typeaheadResponse struct {
 type typeaheadEntity struct {
 	Type      string `json:"$type"`
 	EntityURN string `json:"entityUrn,omitempty"`
+	TargetURN string `json:"targetUrn,omitempty"`
 	Title     *struct {
 		Text string `json:"text"`
 	} `json:"title,omitempty"`
