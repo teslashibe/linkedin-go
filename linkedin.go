@@ -32,9 +32,9 @@ type Client struct {
 }
 
 const (
-	defaultUserAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-	defaultSearchQueryID  = "voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0"
-	defaultProfileQueryID = "voyagerIdentityDashProfiles.d89ea0e36f828f1277dedee13e578393"
+	defaultUserAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	defaultSearchQueryID  = "voyagerSearchDashClusters.7cdf88d3366ad02cc5a3862fb9a24085"
+	defaultProfileQueryID = "voyagerIdentityDashProfiles.8ca6ef03f32147a4d49324ed99a3d978"
 	defaultMaxRetries     = 3
 	defaultRetryBase      = 500 * time.Millisecond
 )

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 )
 
@@ -30,9 +29,9 @@ func (c *Client) GetProfile(ctx context.Context, vanityName string) (*Profile, e
 }
 
 func (c *Client) buildProfileURL(vanityName string) string {
-	variables := fmt.Sprintf("(vanityName:%s)", url.QueryEscape(vanityName))
-	return fmt.Sprintf("%s/graphql?variables=%s&queryId=%s",
-		apiBase, variables, c.profileQueryID)
+	variables := fmt.Sprintf("(vanityName:%s)", vanityName)
+	return fmt.Sprintf("%s/graphql?queryId=%s&includeWebMetadata=true&variables=%s",
+		apiBase, c.profileQueryID, variables)
 }
 
 func parseProfileResponse(resp *profileAPIResponse, vanityName string) (*Profile, error) {

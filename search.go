@@ -42,6 +42,8 @@ type SearchParams struct {
 }
 
 // SearchPeople searches for people on LinkedIn and returns matching profiles.
+// Scans the included array directly for EntityResultViewModel entries, which
+// is more resilient than walking the cluster tree.
 func (c *Client) SearchPeople(ctx context.Context, p SearchParams) ([]Profile, error) {
 	body, err := c.makeRequest(ctx, c.buildSearchURL(p))
 	if err != nil {
@@ -53,42 +55,25 @@ func (c *Client) SearchPeople(ctx context.Context, p SearchParams) ([]Profile, e
 		return nil, fmt.Errorf("%w: %v", ErrParseFailed, err)
 	}
 
-	entityIndex := make(map[string]*includedEntity, len(resp.Included))
+	profiles := make([]Profile, 0)
 	for i := range resp.Included {
-		entityIndex[resp.Included[i].EntityURN] = &resp.Included[i]
-	}
-
-	var resultURNs []string
-	for _, cluster := range resp.Data.Data.SearchDashClustersByAll.Elements {
-		for _, item := range cluster.Items {
-			if item.EntityResultURN != "" {
-				resultURNs = append(resultURNs, item.EntityResultURN)
-			}
+		ent := &resp.Included[i]
+		if ent.Type != typeEntityResult {
+			continue
 		}
-	}
-
-	profiles := make([]Profile, 0, len(resultURNs))
-	for _, urn := range resultURNs {
-		ent, ok := entityIndex[urn]
-		if !ok || ent.Type != typeEntityResult {
+		if ent.Title == nil || ent.PrimarySubtitle == nil || ent.SecondarySubtitle == nil {
 			continue
 		}
 		prof := Profile{URN: ent.TrackingURN}
-		if ent.Title != nil {
-			parts := strings.SplitN(string(*ent.Title), " ", 2)
-			if len(parts) >= 1 {
-				prof.FirstName = parts[0]
-			}
-			if len(parts) == 2 {
-				prof.LastName = parts[1]
-			}
+		parts := strings.SplitN(string(*ent.Title), " ", 2)
+		if len(parts) >= 1 {
+			prof.FirstName = parts[0]
 		}
-		if ent.PrimarySubtitle != nil {
-			prof.Headline = string(*ent.PrimarySubtitle)
+		if len(parts) == 2 {
+			prof.LastName = parts[1]
 		}
-		if ent.SecondarySubtitle != nil {
-			prof.Location = Location{City: string(*ent.SecondarySubtitle)}
-		}
+		prof.Headline = string(*ent.PrimarySubtitle)
+		prof.Location = Location{City: string(*ent.SecondarySubtitle)}
 		if ent.NavigationURL != "" {
 			prof.ProfileURL = ent.NavigationURL
 			prof.PublicID = extractVanityName(ent.NavigationURL)
@@ -120,11 +105,11 @@ func (c *Client) buildSearchURL(p SearchParams) string {
 	}
 	queryParts = append(queryParts, "includeFiltersInResponse:false")
 
-	variables := fmt.Sprintf("(start:%d,count:%d,origin:GLOBAL_SEARCH_HEADER,query:(%s))",
+	variables := fmt.Sprintf("(start:%d,count:%d,origin:FACETED_SEARCH,query:(%s))",
 		p.Start, count, strings.Join(queryParts, ","))
 
-	return fmt.Sprintf("%s/graphql?variables=%s&queryId=%s",
-		apiBase, variables, c.searchQueryID)
+	return fmt.Sprintf("%s/graphql?queryId=%s&includeWebMetadata=true&variables=%s",
+		apiBase, c.searchQueryID, variables)
 }
 
 func buildFilterParams(p SearchParams) []string {

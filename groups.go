@@ -29,11 +29,11 @@ func (c *Client) SearchGroups(ctx context.Context, p GroupSearchParams) ([]Group
 	queryParts = append(queryParts, fmt.Sprintf("queryParameters:List(%s)", strings.Join(filters, ",")))
 	queryParts = append(queryParts, "includeFiltersInResponse:false")
 
-	variables := fmt.Sprintf("(start:%d,count:%d,origin:GLOBAL_SEARCH_HEADER,query:(%s))",
+	variables := fmt.Sprintf("(start:%d,count:%d,origin:FACETED_SEARCH,query:(%s))",
 		p.Start, count, strings.Join(queryParts, ","))
 
-	reqURL := fmt.Sprintf("%s/graphql?variables=%s&queryId=%s",
-		apiBase, variables, c.searchQueryID)
+	reqURL := fmt.Sprintf("%s/graphql?queryId=%s&includeWebMetadata=true&variables=%s",
+		apiBase, c.searchQueryID, variables)
 
 	body, err := c.makeRequest(ctx, reqURL)
 	if err != nil {
@@ -45,30 +45,17 @@ func (c *Client) SearchGroups(ctx context.Context, p GroupSearchParams) ([]Group
 		return nil, fmt.Errorf("%w: %v", ErrParseFailed, err)
 	}
 
-	entityIndex := make(map[string]*includedEntity, len(resp.Included))
+	groups := make([]Group, 0)
 	for i := range resp.Included {
-		entityIndex[resp.Included[i].EntityURN] = &resp.Included[i]
-	}
-
-	var resultURNs []string
-	for _, cluster := range resp.Data.Data.SearchDashClustersByAll.Elements {
-		for _, item := range cluster.Items {
-			if item.EntityResultURN != "" {
-				resultURNs = append(resultURNs, item.EntityResultURN)
-			}
+		ent := &resp.Included[i]
+		if ent.Type != typeEntityResult {
+			continue
 		}
-	}
-
-	groups := make([]Group, 0, len(resultURNs))
-	for _, urn := range resultURNs {
-		ent, ok := entityIndex[urn]
-		if !ok || ent.Type != typeEntityResult {
+		if ent.Title == nil {
 			continue
 		}
 		g := Group{URN: ent.TrackingURN}
-		if ent.Title != nil {
-			g.Name = string(*ent.Title)
-		}
+		g.Name = string(*ent.Title)
 		if ent.PrimarySubtitle != nil {
 			g.Description = string(*ent.PrimarySubtitle)
 		}
