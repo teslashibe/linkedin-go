@@ -107,6 +107,12 @@ func (c *Client) resolveTypeahead(ctx context.Context, query, taType string) ([]
 		}
 	}
 
+	// Both parse attempts yielded no usable hits — check if the body
+	// was valid JSON at all before reporting "no results".
+	var probe json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, fmt.Errorf("%w: typeahead response: %v", ErrParseFailed, err)
+	}
 	return nil, nil
 }
 

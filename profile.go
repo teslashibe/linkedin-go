@@ -26,7 +26,7 @@ func (c *Client) GetProfile(ctx context.Context, vanityName string) (*Profile, e
 		return nil, fmt.Errorf("%w: %v", ErrParseFailed, err)
 	}
 
-	return parseProfileResponse(&resp)
+	return parseProfileResponse(&resp, vanityName)
 }
 
 func (c *Client) buildProfileURL(vanityName string) string {
@@ -35,12 +35,22 @@ func (c *Client) buildProfileURL(vanityName string) string {
 		apiBase, variables, c.profileQueryID)
 }
 
-func parseProfileResponse(resp *profileAPIResponse) (*Profile, error) {
+func parseProfileResponse(resp *profileAPIResponse, vanityName string) (*Profile, error) {
 	var profileEntity *includedEntity
+	// Prefer exact match by public identifier to avoid cross-entity bleed
+	// when multiple profiles appear in the included array.
 	for i := range resp.Included {
-		if resp.Included[i].Type == typeProfile {
+		if resp.Included[i].Type == typeProfile && strings.EqualFold(resp.Included[i].PublicIdentifier, vanityName) {
 			profileEntity = &resp.Included[i]
 			break
+		}
+	}
+	if profileEntity == nil {
+		for i := range resp.Included {
+			if resp.Included[i].Type == typeProfile {
+				profileEntity = &resp.Included[i]
+				break
+			}
 		}
 	}
 	if profileEntity == nil {
@@ -138,6 +148,7 @@ func parseProfileResponse(resp *profileAPIResponse) (*Profile, error) {
 			cert := Certification{
 				Name:   ent.Name,
 				Issuer: ent.Authority,
+				URL:    ent.URL,
 			}
 			if ent.DateRange != nil {
 				if ent.DateRange.Start != nil {
@@ -166,11 +177,13 @@ func extractMemberID(urn string) string {
 
 // belongsToMember checks if an entity URN belongs to the given member.
 // Sub-entity URNs follow the pattern "urn:li:fsd_profilePosition:(MEMBER_ID,SEQ)".
+// Also handles single-value URNs like "urn:li:fsd_profileSkill:(MEMBER_ID)".
 func belongsToMember(entityURN, memberID string) bool {
 	if memberID == "" {
 		return false
 	}
-	return strings.Contains(entityURN, "("+memberID+",")
+	return strings.Contains(entityURN, "("+memberID+",") ||
+		strings.Contains(entityURN, "("+memberID+")")
 }
 
 func extractCountryCode(countryURN string) string {

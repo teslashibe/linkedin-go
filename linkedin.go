@@ -89,7 +89,11 @@ func WithRetry(maxAttempts int, base time.Duration) Option {
 	}
 }
 
-// WithHTTPClient replaces the default http.Client.
+// WithHTTPClient replaces the default http.Client. Nil is ignored.
 func WithHTTPClient(hc *http.Client) Option {
-	return func(c *Client) { c.httpClient = hc }
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
 }

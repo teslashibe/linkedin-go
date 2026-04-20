@@ -25,7 +25,7 @@ LinkedIn session credentials obtained from your browser dev tools:
 ## Quick start
 
 ```go
-client, err := linkedin.New(linkedin.Auth{
+client := linkedin.New(linkedin.Auth{
     LiAt: os.Getenv("LI_AT"),
     CSRF: os.Getenv("CSRF_TOKEN"),
 })
@@ -48,7 +48,7 @@ All filters available in the LinkedIn UI are supported:
 
 | Field | Type | Description |
 |---|---|---|
-| `Keywords` | `string` | Search query (required) |
+| `Keywords` | `string` | Search query |
 | `Network` | `[]Network` | `F` (1st), `S` (2nd), `O` (3rd+) |
 | `CurrentCompany` | `[]string` | Company URNs |
 | `PastCompany` | `[]string` | Company URNs |
@@ -77,7 +77,7 @@ schools, _ := client.ResolveSchools(ctx, "Stanford")
 ## Options
 
 ```go
-client, _ := linkedin.New(auth,
+client := linkedin.New(auth,
     linkedin.WithRetry(5, time.Second),             // 5 attempts, 1s base backoff
     linkedin.WithQueryIDs("newSearchID", ""),        // override Voyager query IDs
     linkedin.WithUserAgent("custom-agent/1.0"),
@@ -85,7 +85,7 @@ client, _ := linkedin.New(auth,
 )
 
 // Disable retry entirely
-client, _ := linkedin.New(auth, linkedin.WithRetry(0, 0))
+client := linkedin.New(auth, linkedin.WithRetry(0, 0))
 ```
 
 ## License
