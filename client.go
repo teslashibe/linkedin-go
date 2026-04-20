@@ -68,8 +68,9 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	req.Header.Set("csrf-token", c.auth.CSRF)
 	req.Header.Set("x-li-lang", "en_US")
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
-	req.AddCookie(&http.Cookie{Name: "li_at", Value: c.auth.LiAt})
-	req.AddCookie(&http.Cookie{Name: "JSESSIONID", Value: `"` + c.auth.JSESSIONID + `"`})
+	// Set cookies via raw header to preserve JSESSIONID quotes that
+	// Go's http.Cookie sanitizer would strip.
+	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
