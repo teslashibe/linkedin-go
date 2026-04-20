@@ -68,8 +68,11 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	req.Header.Set("csrf-token", c.auth.CSRF)
 	req.Header.Set("x-li-lang", "en_US")
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
-	req.AddCookie(&http.Cookie{Name: "li_at", Value: c.auth.LiAt})
-	req.AddCookie(&http.Cookie{Name: "JSESSIONID", Value: `"` + c.auth.JSESSIONID + `"`})
+	req.Header.Set("x-li-track", `{"clientVersion":"1.13.9814","mpVersion":"1.13.9814","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
+	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_search_srp_people;0")
+	// Set cookies via raw header to preserve JSESSIONID quotes that
+	// Go's http.Cookie sanitizer would strip.
+	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -90,7 +93,7 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	case resp.StatusCode >= 500:
 		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
+		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -113,8 +116,18 @@ type retryAfterError struct {
 func (e *retryAfterError) Error() string { return e.err.Error() }
 func (e *retryAfterError) Unwrap() error { return e.err }
 
+// nonRetryableError marks errors from non-recoverable HTTP statuses (non-429 4xx).
+type nonRetryableError struct {
+	err error
+}
+
+func (e *nonRetryableError) Error() string { return e.err.Error() }
+func (e *nonRetryableError) Unwrap() error { return e.err }
+
 func isNonRecoverable(err error) bool {
-	return errors.Is(err, ErrUnauthorized) ||
+	var nre *nonRetryableError
+	return errors.As(err, &nre) ||
+		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrInvalidParams)
@@ -126,6 +139,11 @@ func parseRetryAfter(val string) time.Duration {
 	}
 	if secs, err := strconv.Atoi(val); err == nil {
 		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(val); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
 	}
 	return 0
 }

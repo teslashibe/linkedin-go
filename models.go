@@ -82,6 +82,7 @@ type Education struct {
 type Certification struct {
 	Name    string `json:"name"`
 	Issuer  string `json:"issuer,omitempty"`
+	URL     string `json:"url,omitempty"`
 	Issued  Date   `json:"issued,omitempty"`
 	Expires Date   `json:"expires,omitempty"`
 }

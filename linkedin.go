@@ -34,7 +34,7 @@ type Client struct {
 const (
 	defaultUserAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	defaultSearchQueryID  = "voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0"
-	defaultProfileQueryID = "voyagerIdentityDashProfiles.53d2faade97e29ac0dea5a4f23a4508f"
+	defaultProfileQueryID = "voyagerIdentityDashProfiles.d89ea0e36f828f1277dedee13e578393"
 	defaultMaxRetries     = 3
 	defaultRetryBase      = 500 * time.Millisecond
 )
@@ -89,7 +89,11 @@ func WithRetry(maxAttempts int, base time.Duration) Option {
 	}
 }
 
-// WithHTTPClient replaces the default http.Client.
+// WithHTTPClient replaces the default http.Client. Nil is ignored.
 func WithHTTPClient(hc *http.Client) Option {
-	return func(c *Client) { c.httpClient = hc }
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
 }

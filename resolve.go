@@ -4,150 +4,145 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net/url"
 )
 
-const typeaheadBaseURL = "https://www.linkedin.com"
-
-// ResolveLocations searches LinkedIn's typeahead for locations matching
-// the query and returns their URNs and human-readable names.
+// ResolveLocations searches LinkedIn's typeahead for geographic locations
+// matching the query and returns their URNs. Use the URNs with SearchParams.GeoURN.
 func (c *Client) ResolveLocations(ctx context.Context, query string) ([]GeoResult, error) {
-	if query == "" {
-		return nil, fmt.Errorf("%w: query is required", ErrInvalidParams)
-	}
-
-	rawURL := buildTypeaheadURL(typeaheadBaseURL, "GEO", query)
-	body, err := c.doGet(ctx, rawURL, typeaheadHeaders())
+	results, err := c.resolveTypeahead(ctx, query, "GEO")
 	if err != nil {
 		return nil, err
 	}
-
-	entities, err := parseTypeahead(body)
-	if err != nil {
-		return nil, err
+	out := make([]GeoResult, len(results))
+	for i, r := range results {
+		out[i] = GeoResult{URN: r.urn, Name: r.name}
 	}
-
-	var results []GeoResult
-	for _, e := range entities {
-		if e.URN == "" {
-			continue
-		}
-		results = append(results, GeoResult{URN: e.URN, Name: e.Name})
-	}
-	return results, nil
+	return out, nil
 }
 
-// ResolveCompanies searches LinkedIn's typeahead for companies matching
-// the query and returns their URNs and human-readable names.
+// ResolveCompanies searches LinkedIn's typeahead for companies matching the
+// query and returns their URNs. Use the URNs with SearchParams.CurrentCompany
+// or SearchParams.PastCompany.
 func (c *Client) ResolveCompanies(ctx context.Context, query string) ([]CompanyResult, error) {
-	if query == "" {
-		return nil, fmt.Errorf("%w: query is required", ErrInvalidParams)
-	}
-
-	rawURL := buildTypeaheadURL(typeaheadBaseURL, "COMPANY", query)
-	body, err := c.doGet(ctx, rawURL, typeaheadHeaders())
+	results, err := c.resolveTypeahead(ctx, query, "COMPANY")
 	if err != nil {
 		return nil, err
 	}
-
-	entities, err := parseTypeahead(body)
-	if err != nil {
-		return nil, err
+	out := make([]CompanyResult, len(results))
+	for i, r := range results {
+		out[i] = CompanyResult{URN: r.urn, Name: r.name}
 	}
-
-	var results []CompanyResult
-	for _, e := range entities {
-		if e.URN == "" {
-			continue
-		}
-		results = append(results, CompanyResult{URN: e.URN, Name: e.Name})
-	}
-	return results, nil
+	return out, nil
 }
 
-// ResolveSchools searches LinkedIn's typeahead for schools matching
-// the query and returns their URNs and human-readable names.
+// ResolveSchools searches LinkedIn's typeahead for schools matching the query
+// and returns their URNs. Use the URNs with SearchParams.School.
 func (c *Client) ResolveSchools(ctx context.Context, query string) ([]SchoolResult, error) {
+	results, err := c.resolveTypeahead(ctx, query, "SCHOOL")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SchoolResult, len(results))
+	for i, r := range results {
+		out[i] = SchoolResult{URN: r.urn, Name: r.name}
+	}
+	return out, nil
+}
+
+type typeaheadHit struct {
+	urn  string
+	name string
+}
+
+func (c *Client) resolveTypeahead(ctx context.Context, query, taType string) ([]typeaheadHit, error) {
 	if query == "" {
-		return nil, fmt.Errorf("%w: query is required", ErrInvalidParams)
+		return nil, fmt.Errorf("%w: query required", ErrInvalidParams)
 	}
 
-	rawURL := buildTypeaheadURL(typeaheadBaseURL, "SCHOOL", query)
-	body, err := c.doGet(ctx, rawURL, typeaheadHeaders())
+	reqURL := fmt.Sprintf("%s/graphql?variables=(query:%s,types:List(%s),count:10)&queryId=voyagerSearchDashReusableTypeahead.57a4fa600f3f5f0c5950200a105f64cf",
+		apiBase, url.QueryEscape(query), taType)
+
+	body, err := c.makeRequest(ctx, reqURL)
 	if err != nil {
 		return nil, err
 	}
 
-	entities, err := parseTypeahead(body)
-	if err != nil {
-		return nil, err
+	// REST API format (elements-based)
+	var restResp typeaheadRestResponse
+	if err := json.Unmarshal(body, &restResp); err == nil && len(restResp.Elements) > 0 {
+		hits := make([]typeaheadHit, 0, len(restResp.Elements))
+		for _, elem := range restResp.Elements {
+			urn := elem.TargetURN
+			if urn == "" {
+				continue
+			}
+			name := ""
+			if elem.Text != nil {
+				name = elem.Text.Text
+			}
+			hits = append(hits, typeaheadHit{urn: urn, name: name})
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
 	}
 
-	var results []SchoolResult
-	for _, e := range entities {
-		if e.URN == "" {
-			continue
+	// GraphQL format (included-based)
+	var inclResp typeaheadResponse
+	if err := json.Unmarshal(body, &inclResp); err == nil && len(inclResp.Included) > 0 {
+		hits := make([]typeaheadHit, 0, len(inclResp.Included))
+		for _, ent := range inclResp.Included {
+			urn := ent.TargetURN
+			if urn == "" {
+				urn = ent.EntityURN
+			}
+			if urn == "" {
+				continue
+			}
+			name := ent.Name
+			if name == "" && ent.Title != nil {
+				name = ent.Title.Text
+			}
+			hits = append(hits, typeaheadHit{urn: urn, name: name})
 		}
-		results = append(results, SchoolResult{URN: e.URN, Name: e.Name})
+		if len(hits) > 0 {
+			return hits, nil
+		}
 	}
-	return results, nil
+
+	// Both parse attempts yielded no usable hits — check if the body
+	// was valid JSON at all before reporting "no results".
+	var probe json.RawMessage
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, fmt.Errorf("%w: typeahead response: %v", ErrParseFailed, err)
+	}
+	return nil, nil
 }
 
-type typeaheadResult struct {
-	URN  string
-	Name string
+// Typeahead response types (unexported).
+
+type typeaheadRestResponse struct {
+	Elements []typeaheadRestElement `json:"elements"`
 }
 
-func parseTypeahead(body []byte) ([]typeaheadResult, error) {
-	// Try parsing as the standard included-array format first
-	var resp struct {
-		Included []json.RawMessage `json:"included"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("%w: typeahead: %v", ErrParseFailed, err)
-	}
+type typeaheadRestElement struct {
+	TargetURN string `json:"targetUrn,omitempty"`
+	Text      *struct {
+		Text string `json:"text"`
+	} `json:"text,omitempty"`
+}
 
-	var results []typeaheadResult
-	for _, raw := range resp.Included {
-		var entity struct {
-			EntityURN string `json:"entityUrn"`
-			Title     *struct {
-				Text string `json:"text"`
-			} `json:"title"`
-			Name string `json:"name"`
-			Type string `json:"$type"`
-		}
-		if err := json.Unmarshal(raw, &entity); err != nil {
-			continue
-		}
+type typeaheadResponse struct {
+	Included []typeaheadEntity `json:"included"`
+}
 
-		// Skip non-result types (like search metadata)
-		if entity.EntityURN == "" {
-			continue
-		}
-		// Only include typeahead result entities
-		if !strings.Contains(entity.Type, "TypeaheadEntityResult") &&
-			!strings.Contains(entity.Type, "Geo") &&
-			!strings.Contains(entity.Type, "Company") &&
-			!strings.Contains(entity.Type, "School") &&
-			entity.Title == nil && entity.Name == "" {
-			continue
-		}
-
-		name := entity.Name
-		if name == "" && entity.Title != nil {
-			name = entity.Title.Text
-		}
-		if name == "" {
-			continue
-		}
-
-		// Extract clean URN — typeahead URNs often have the form
-		// urn:li:fsd_geo:103644278 or urn:li:fsd_company:1234
-		urn := entity.EntityURN
-
-		results = append(results, typeaheadResult{URN: urn, Name: name})
-	}
-
-	return results, nil
+type typeaheadEntity struct {
+	Type      string `json:"$type"`
+	EntityURN string `json:"entityUrn,omitempty"`
+	TargetURN string `json:"targetUrn,omitempty"`
+	Title     *struct {
+		Text string `json:"text"`
+	} `json:"title,omitempty"`
+	Name string `json:"name,omitempty"`
 }
