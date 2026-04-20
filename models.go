@@ -237,6 +237,13 @@ func (ft *flexText) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("cannot unmarshal %s into flexText", string(data))
 }
 
+func flexTextString(ft *flexText) string {
+	if ft == nil {
+		return ""
+	}
+	return string(*ft)
+}
+
 // searchAPIResponse is the top-level search response.
 type searchAPIResponse struct {
 	Data     searchRootData   `json:"data"`
@@ -302,11 +309,11 @@ type includedEntity struct {
 	NavigationURL     string    `json:"navigationUrl,omitempty"`
 
 	// Profile fields
-	PublicIdentifier string `json:"publicIdentifier,omitempty"`
-	FirstName        string `json:"firstName,omitempty"`
-	LastName         string `json:"lastName,omitempty"`
-	Headline         string `json:"headline,omitempty"`
-	Summary          string `json:"summary,omitempty"`
+	PublicIdentifier string    `json:"publicIdentifier,omitempty"`
+	FirstName        string    `json:"firstName,omitempty"`
+	LastName         string    `json:"lastName,omitempty"`
+	Headline         string    `json:"headline,omitempty"`
+	Summary          *flexText `json:"summary,omitempty"`
 
 	// Location
 	GeoLocation *geoLocationResponse `json:"geoLocation,omitempty"`

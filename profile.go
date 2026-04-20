@@ -65,7 +65,7 @@ func parseProfileResponse(resp *profileAPIResponse, vanityName string) (*Profile
 		FirstName: profileEntity.FirstName,
 		LastName:  profileEntity.LastName,
 		Headline:  profileEntity.Headline,
-		Summary:   profileEntity.Summary,
+		Summary:   flexTextString(profileEntity.Summary),
 	}
 
 	if profileEntity.PublicIdentifier != "" {
