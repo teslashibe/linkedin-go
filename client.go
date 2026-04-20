@@ -2,6 +2,7 @@ package linkedin
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -66,13 +67,14 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/vnd.linkedin.normalized+json+2.1")
+	req.Header.Set("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 	req.Header.Set("csrf-token", c.auth.CSRF)
 	req.Header.Set("x-li-lang", "en_US")
 	req.Header.Set("x-restli-protocol-version", "2.0.0")
-	req.Header.Set("x-li-track", `{"clientVersion":"1.13.9814","mpVersion":"1.13.9814","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
+	req.Header.Set("x-li-track", `{"clientVersion":"1.13.35368","mpVersion":"1.13.35368","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
 	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_search_srp_people;0")
-	// Set cookies via raw header to preserve JSESSIONID quotes that
-	// Go's http.Cookie sanitizer would strip.
+	req.Header.Set("x-li-pem-metadata", "Voyager - People SRP=search-results")
 	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))
 
 	resp, err := c.httpClient.Do(req)
@@ -97,7 +99,20 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	return readResponseBody(resp)
+}
+
+func readResponseBody(resp *http.Response) ([]byte, error) {
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("%w: gzip: %v", ErrRequestFailed, err)
+		}
+		defer gr.Close()
+		reader = gr
+	}
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading response body: %v", ErrRequestFailed, err)
 	}
@@ -183,11 +198,7 @@ func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload [
 		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%w: reading response body: %v", ErrRequestFailed, err)
-	}
-	return body, nil
+	return readResponseBody(resp)
 }
 
 func (c *Client) backoff(attempt int) time.Duration {
