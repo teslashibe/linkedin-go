@@ -10,6 +10,7 @@ package linkedin
 
 import (
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,12 @@ type Client struct {
 	profileQueryID string
 	maxRetries     int
 	retryBase      time.Duration
+	minGap         time.Duration
+
+	rlMu      sync.Mutex
+	rlState   RateLimitState
+	gapMu     sync.Mutex
+	lastReqAt time.Time
 }
 
 const (
@@ -37,6 +44,7 @@ const (
 	defaultProfileQueryID = "voyagerIdentityDashProfiles.8ca6ef03f32147a4d49324ed99a3d978"
 	defaultMaxRetries     = 3
 	defaultRetryBase      = 500 * time.Millisecond
+	defaultMinGap         = 300 * time.Millisecond
 )
 
 // New creates a new LinkedIn client with the given auth credentials and options.
@@ -52,6 +60,7 @@ func New(auth Auth, opts ...Option) *Client {
 		profileQueryID: defaultProfileQueryID,
 		maxRetries:     defaultMaxRetries,
 		retryBase:      defaultRetryBase,
+		minGap:         defaultMinGap,
 	}
 	for _, o := range opts {
 		o(c)
@@ -96,4 +105,17 @@ func WithHTTPClient(hc *http.Client) Option {
 			c.httpClient = hc
 		}
 	}
+}
+
+// WithMinRequestGap sets the minimum delay between consecutive requests.
+// Default: 300ms.
+func WithMinRequestGap(d time.Duration) Option {
+	return func(c *Client) { c.minGap = d }
+}
+
+// RateLimit returns a snapshot of the most recently observed rate-limit state.
+func (c *Client) RateLimit() RateLimitState {
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	return c.rlState
 }
