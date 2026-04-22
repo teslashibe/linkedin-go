@@ -88,6 +88,27 @@ client := linkedin.New(auth,
 client := linkedin.New(auth, linkedin.WithRetry(0, 0))
 ```
 
+## MCP support
+
+This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 19 tools cover the full client API: people search, profile fetch, group search/fetch/posts/members/membership/post, messaging (list/read/send), and typeahead resolvers (locations, companies, schools).
+
+```go
+import (
+    "github.com/teslashibe/mcptool"
+    linkedin "github.com/teslashibe/linkedin-go"
+    linkmcp "github.com/teslashibe/linkedin-go/mcp"
+)
+
+client := linkedin.New(linkedin.Auth{...})
+provider := linkmcp.Provider{}
+for _, tool := range provider.Tools() {
+    // register tool with your MCP server, passing client as the
+    // opaque client argument when invoking
+}
+```
+
+A coverage test in `mcp/mcp_test.go` fails if a new exported method is added to `*Client` without either being wrapped by an MCP tool or being added to `mcp.Excluded` with a reason — keeping the MCP surface in lockstep with the package API is enforced by CI rather than convention.
+
 ## License
 
 MIT
