@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -29,7 +30,10 @@ func (c *Client) GetProfile(ctx context.Context, vanityName string) (*Profile, e
 }
 
 func (c *Client) buildProfileURL(vanityName string) string {
-	variables := fmt.Sprintf("(vanityName:%s)", vanityName)
+	// Vanity names with non-ASCII characters (é, í, Hebrew, etc.) must be
+	// percent-encoded before being embedded in the GraphQL variables query
+	// string — LinkedIn's edge returns HTTP 400 on raw UTF-8 bytes.
+	variables := fmt.Sprintf("(vanityName:%s)", url.QueryEscape(vanityName))
 	return fmt.Sprintf("%s/graphql?queryId=%s&includeWebMetadata=true&variables=%s",
 		apiBase, c.profileQueryID, variables)
 }

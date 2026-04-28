@@ -125,7 +125,7 @@ func (c *Client) GetGroupPosts(ctx context.Context, p GroupPostParams) ([]GroupP
 	}
 
 	reqURL := fmt.Sprintf("%s/groups/groups/%s/posts?q=group&start=%d&count=%d&sortBy=%s",
-		apiBase, p.GroupID, p.Start, count, sortBy)
+		apiBase, url.PathEscape(p.GroupID), p.Start, count, sortBy)
 
 	body, err := c.makeRequest(ctx, reqURL)
 	if err != nil {
@@ -186,7 +186,7 @@ func (c *Client) GetGroupMembers(ctx context.Context, p GroupMemberParams) ([]Gr
 	}
 
 	reqURL := fmt.Sprintf("%s/groups/groups/%s/members?q=group&start=%d&count=%d",
-		apiBase, p.GroupID, p.Start, count)
+		apiBase, url.PathEscape(p.GroupID), p.Start, count)
 	if p.Role != "" {
 		reqURL += "&role=" + p.Role
 	}
@@ -285,7 +285,7 @@ func (c *Client) JoinGroup(ctx context.Context, groupID string) error {
 	if groupID == "" {
 		return fmt.Errorf("%w: group ID required", ErrInvalidParams)
 	}
-	reqURL := fmt.Sprintf("%s/groups/groups/%s/members?action=join", apiBase, groupID)
+	reqURL := fmt.Sprintf("%s/groups/groups/%s/members?action=join", apiBase, url.PathEscape(groupID))
 	_, err := c.makePostRequest(ctx, reqURL, []byte("{}"))
 	return err
 }
@@ -295,7 +295,7 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 	if groupID == "" {
 		return fmt.Errorf("%w: group ID required", ErrInvalidParams)
 	}
-	reqURL := fmt.Sprintf("%s/groups/groups/%s/members?action=leave", apiBase, groupID)
+	reqURL := fmt.Sprintf("%s/groups/groups/%s/members?action=leave", apiBase, url.PathEscape(groupID))
 	_, err := c.makePostRequest(ctx, reqURL, []byte("{}"))
 	return err
 }
