@@ -121,6 +121,49 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	return readResponseBody(resp)
 }
 
+// doPublicGet performs an unauthenticated GET against a LinkedIn public endpoint
+// (no Voyager headers, no session cookies). Honours the client's min-request gap
+// so we stay polite even on public routes.
+func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, error) {
+	c.waitForGap(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		// fall through
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, ErrNotFound
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return nil, &retryAfterError{
+			wait: parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second),
+			err:  ErrRateLimited,
+		}
+	case resp.StatusCode >= 500:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
+	default:
+		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
+	}
+
+	return readResponseBody(resp)
+}
+
 func readResponseBody(resp *http.Response) ([]byte, error) {
 	var reader io.Reader = resp.Body
 	if resp.Header.Get("Content-Encoding") == "gzip" {
