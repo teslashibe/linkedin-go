@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -78,7 +79,7 @@ func (c *Client) GetMessages(ctx context.Context, p MessageListParams) ([]Messag
 
 	convID := extractURNID(p.ConversationURN)
 	reqURL := fmt.Sprintf("%s/messaging/conversations/%s/events?start=%d&count=%d",
-		apiBase, convID, p.Start, count)
+		apiBase, url.PathEscape(convID), p.Start, count)
 
 	body, err := c.makeRequest(ctx, reqURL)
 	if err != nil {
@@ -134,7 +135,7 @@ func (c *Client) SendMessage(ctx context.Context, p SendMessageParams) error {
 	if p.ConversationURN != "" {
 		convID := extractURNID(p.ConversationURN)
 		reqURL := fmt.Sprintf("%s/messaging/conversations/%s/events?action=create",
-			apiBase, convID)
+			apiBase, url.PathEscape(convID))
 
 		payload := map[string]interface{}{"eventCreate": eventCreate}
 		data, err := json.Marshal(payload)
