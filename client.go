@@ -26,6 +26,12 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 		return nil, ErrInvalidAuth
 	}
 
+	release := c.acquireRequestSlot(ctx)
+	if release == nil {
+		return nil, ctx.Err()
+	}
+	defer release()
+
 	if err := c.warmUp(ctx); err != nil {
 		// warm-up failure is fatal — without it Voyager calls almost always
 		// trip the bot detector, since they look like out-of-context API hits.
@@ -109,6 +115,12 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 // doPublicGet performs an unauthenticated GET against a LinkedIn public endpoint
 // (no Voyager headers, no session cookies). Honours the client's pacing.
 func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, error) {
+	release := c.acquireRequestSlot(ctx)
+	if release == nil {
+		return nil, ctx.Err()
+	}
+	defer release()
+
 	if err := c.gateBeforeRequest(ctx); err != nil {
 		return nil, err
 	}
@@ -178,6 +190,12 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 	if c.auth.LiAt == "" || c.auth.CSRF == "" {
 		return nil, ErrInvalidAuth
 	}
+
+	release := c.acquireRequestSlot(ctx)
+	if release == nil {
+		return nil, ctx.Err()
+	}
+	defer release()
 
 	if err := c.warmUp(ctx); err != nil {
 		return nil, err
@@ -267,6 +285,59 @@ func (c *Client) gateBeforeRequest(ctx context.Context) error {
 		return ctx.Err()
 	}
 	return nil
+}
+
+// acquireRequestSlot enforces "one request in flight per Client at a time".
+// Concurrent callers (e.g. an MCP server fielding 10 parallel tool calls)
+// queue here. The mutex is held through pacer-wait + HTTP roundtrip + retries
+// + response processing — releasing it earlier would let the next caller
+// fire its HTTP request before this one finished, defeating stealth pacing.
+//
+// Returns a release function the caller MUST call (typically via defer), or
+// nil if ctx was already cancelled. Cancellation while waiting is honoured;
+// callers that timed out cleanly hand the slot to the next waiter.
+//
+// pendingReqs is incremented on entry and decremented on release; it's
+// observation-only (read via PendingRequests for status reporting).
+func (c *Client) acquireRequestSlot(ctx context.Context) func() {
+	if ctx.Err() != nil {
+		return nil
+	}
+	c.pendingReqs.Add(1)
+
+	// Try a fast lock first; fall back to a context-aware wait so an upstream
+	// timeout/cancellation doesn't get stuck behind a long pacer sleep.
+	done := make(chan struct{})
+	go func() {
+		c.reqMu.Lock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return func() {
+			c.reqMu.Unlock()
+			c.pendingReqs.Add(-1)
+		}
+	case <-ctx.Done():
+		// We won't actually hold the lock — but the goroutine above will
+		// eventually acquire it, so we have to drain it to keep the count
+		// correct. Spin off a release as soon as it lands.
+		go func() {
+			<-done
+			c.reqMu.Unlock()
+			c.pendingReqs.Add(-1)
+		}()
+		return nil
+	}
+}
+
+// PendingRequests reports the number of goroutines currently waiting on or
+// holding the per-client request slot. 0 means idle; >1 means concurrent
+// callers are queued (e.g. the host application fired parallel tool calls).
+// Useful for surfacing "queued behind N" in MCP / status output.
+func (c *Client) PendingRequests() int {
+	return int(c.pendingReqs.Load())
 }
 
 // classifyResponse maps an HTTP response to one of our sentinel errors,

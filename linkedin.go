@@ -75,6 +75,18 @@ type Client struct {
 	rlState   RateLimitState
 	gapMu     sync.Mutex
 	lastReqAt time.Time
+
+	// reqMu serializes the entire authenticated-request lifecycle
+	// (pacer wait + HTTP roundtrip + retries + response processing). One
+	// LinkedIn API call in flight per Client at a time — anything else
+	// looks like a script to LinkedIn's bot detection no matter how good
+	// the per-request gap is. Concurrent callers (e.g. an MCP server
+	// receiving 10 parallel tool calls from Claude Desktop) queue here.
+	//
+	// pendingReqs counts goroutines waiting on or holding the lock; used
+	// only for observability ("queued behind N").
+	reqMu       sync.Mutex
+	pendingReqs atomic.Int32
 }
 
 const (
