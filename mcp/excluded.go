@@ -15,6 +15,8 @@ var Excluded = map[string]string{
 	"RateLimit":         "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
 	"RequestsRemaining": "internal observability for the human pacer; surface via the host's status reporting, not as a callable tool",
 	"PendingRequests":   "internal observability for the per-client serialization queue; surface via the host's status reporting, not as a callable tool",
+	"CooldownUntil":     "internal observability for the operator-imposed cooldown gate; surface via the host's status reporting, not as a callable tool",
+	"InCooldown":        "internal observability for the operator-imposed cooldown gate; surface via the host's status reporting, not as a callable tool",
 	"Role":              "construction-time tag for multi-account separation; not an agent-facing capability",
 	"AssertRole":        "construction-time guard for multi-account separation; not an agent-facing capability",
 }

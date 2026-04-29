@@ -25,6 +25,9 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 	if c.auth.LiAt == "" || c.auth.CSRF == "" {
 		return nil, ErrInvalidAuth
 	}
+	if err := c.checkCooldown(); err != nil {
+		return nil, err
+	}
 
 	release := c.acquireRequestSlot(ctx)
 	if release == nil {
@@ -115,6 +118,9 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 // doPublicGet performs an unauthenticated GET against a LinkedIn public endpoint
 // (no Voyager headers, no session cookies). Honours the client's pacing.
 func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, error) {
+	if err := c.checkCooldown(); err != nil {
+		return nil, err
+	}
 	release := c.acquireRequestSlot(ctx)
 	if release == nil {
 		return nil, ctx.Err()
@@ -189,6 +195,9 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
 	if c.auth.LiAt == "" || c.auth.CSRF == "" {
 		return nil, ErrInvalidAuth
+	}
+	if err := c.checkCooldown(); err != nil {
+		return nil, err
 	}
 
 	release := c.acquireRequestSlot(ctx)
@@ -285,6 +294,20 @@ func (c *Client) gateBeforeRequest(ctx context.Context) error {
 		return ctx.Err()
 	}
 	return nil
+}
+
+// checkCooldown returns ErrInCooldown (with the deadline embedded in the
+// message) when an operator-imposed cooldown is active. The message format
+// is stable so MCP/UI layers can grep for it without parsing wrapped errors.
+func (c *Client) checkCooldown() error {
+	if c.cooldownUntil.IsZero() || !time.Now().Before(c.cooldownUntil) {
+		return nil
+	}
+	return fmt.Errorf("%w: until %s (%s remaining)",
+		ErrInCooldown,
+		c.cooldownUntil.Format(time.RFC3339),
+		time.Until(c.cooldownUntil).Round(time.Second),
+	)
 }
 
 // acquireRequestSlot enforces "one request in flight per Client at a time".
@@ -533,6 +556,7 @@ func isNonRecoverable(err error) bool {
 		errors.Is(err, ErrChallengeRequired) ||
 		errors.Is(err, ErrDailyBudget) ||
 		errors.Is(err, ErrOutsideHours) ||
+		errors.Is(err, ErrInCooldown) ||
 		errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrInvalidParams)

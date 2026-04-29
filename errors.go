@@ -10,6 +10,7 @@ var (
 	ErrDailyBudget       = errors.New("linkedin: daily request budget exhausted")
 	ErrOutsideHours      = errors.New("linkedin: outside configured working hours")
 	ErrRoleMismatch      = errors.New("linkedin: client role does not match required role")
+	ErrInCooldown        = errors.New("linkedin: client is in operator-imposed cooldown — refusing to make any request")
 	ErrRateLimited      = errors.New("linkedin: rate limited")
 	ErrNotFound         = errors.New("linkedin: not found")
 	ErrInvalidParams    = errors.New("linkedin: invalid parameters")
