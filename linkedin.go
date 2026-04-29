@@ -10,27 +10,46 @@ package linkedin
 
 import (
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Auth holds the LinkedIn session cookies required for Voyager API access.
+//
+// LiAt and CSRF are required. The richer the ExtraCookies set the more the
+// session will look like a real browser to LinkedIn's bot detection — at a
+// minimum copy across `bcookie`, `bscookie`, `lidc`, `li_sugr`, `liap`,
+// `lang`, `lms_ads`, `lms_analytics`, `UserMatchHistory`, `AnalyticsSyncHistory`
+// from a fresh browser session.
 type Auth struct {
-	LiAt       string
-	CSRF       string
-	JSESSIONID string // optional; defaults to CSRF value
+	LiAt         string
+	CSRF         string
+	JSESSIONID   string // optional; defaults to CSRF value
+	ExtraCookies string // optional; additional browser cookies appended verbatim (e.g. "bcookie=...; bscookie=...")
 }
 
 // Client is a LinkedIn Voyager API client.
 type Client struct {
 	auth           Auth
 	httpClient     *http.Client
-	userAgent      string
+	jar            *cookiejar.Jar
+	browser        BrowserProfile
 	searchQueryID  string
 	profileQueryID string
 	maxRetries     int
 	retryBase      time.Duration
 	minGap         time.Duration
+	pacer          *pacer
+
+	warmedUp atomic.Bool
+
+	// userAgent is kept for compatibility with WithUserAgent; if set it
+	// overrides browser.UserAgent.
+	userAgent string
 
 	rlMu      sync.Mutex
 	rlState   RateLimitState
@@ -39,7 +58,6 @@ type Client struct {
 }
 
 const (
-	defaultUserAgent      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	defaultSearchQueryID  = "voyagerSearchDashClusters.7cdf88d3366ad02cc5a3862fb9a24085"
 	defaultProfileQueryID = "voyagerIdentityDashProfiles.8ca6ef03f32147a4d49324ed99a3d978"
 	defaultMaxRetries     = 3
@@ -47,15 +65,29 @@ const (
 	defaultMinGap         = 300 * time.Millisecond
 )
 
+// linkedinBaseURL is reused when seeding the cookie jar with the user's
+// initial cookies and when reading server Set-Cookie updates.
+var linkedinBaseURL = mustParseURL("https://www.linkedin.com/")
+
+func mustParseURL(s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}
+
 // New creates a new LinkedIn client with the given auth credentials and options.
 func New(auth Auth, opts ...Option) *Client {
 	if auth.JSESSIONID == "" {
 		auth.JSESSIONID = auth.CSRF
 	}
+	jar, _ := cookiejar.New(nil)
 	c := &Client{
 		auth:           auth,
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
-		userAgent:      defaultUserAgent,
+		httpClient:     &http.Client{Timeout: 30 * time.Second, Jar: jar},
+		jar:            jar,
+		browser:        MacChromePT(),
 		searchQueryID:  defaultSearchQueryID,
 		profileQueryID: defaultProfileQueryID,
 		maxRetries:     defaultMaxRetries,
@@ -65,7 +97,87 @@ func New(auth Auth, opts ...Option) *Client {
 	for _, o := range opts {
 		o(c)
 	}
+
+	if c.userAgent != "" {
+		c.browser.UserAgent = c.userAgent
+	}
+
+	// Seed the jar with the cookies the caller provided.
+	c.seedJar()
+
+	// If WithHTTPClient was used, ensure the user's client has our jar
+	// attached so Set-Cookie updates roundtrip correctly. We don't clobber a
+	// jar the user explicitly set.
+	if c.httpClient.Jar == nil {
+		c.httpClient.Jar = c.jar
+	} else {
+		// Use the user-supplied jar as the canonical store.
+		c.jar = jarFromClient(c.httpClient)
+		c.seedJar()
+	}
+
 	return c
+}
+
+func jarFromClient(hc *http.Client) *cookiejar.Jar {
+	if j, ok := hc.Jar.(*cookiejar.Jar); ok {
+		return j
+	}
+	// Fallback: replace it with one of ours.
+	j, _ := cookiejar.New(nil)
+	hc.Jar = j
+	return j
+}
+
+// seedJar pushes Auth.LiAt + Auth.JSESSIONID + parsed ExtraCookies into the
+// jar so subsequent requests carry them automatically. Call once after
+// constructing the client.
+func (c *Client) seedJar() {
+	if c.jar == nil {
+		return
+	}
+	cookies := []*http.Cookie{
+		{Name: "li_at", Value: c.auth.LiAt, Domain: ".linkedin.com", Path: "/", Secure: true, HttpOnly: true},
+		{Name: "JSESSIONID", Value: `"` + c.auth.JSESSIONID + `"`, Domain: ".linkedin.com", Path: "/", Secure: true},
+	}
+	for _, kv := range parseCookieString(c.auth.ExtraCookies) {
+		// Skip li_at / JSESSIONID if the caller accidentally repeats them.
+		if kv.Name == "li_at" || kv.Name == "JSESSIONID" {
+			continue
+		}
+		cookies = append(cookies, &http.Cookie{
+			Name:   kv.Name,
+			Value:  kv.Value,
+			Domain: ".linkedin.com",
+			Path:   "/",
+			Secure: true,
+		})
+	}
+	c.jar.SetCookies(linkedinBaseURL, cookies)
+}
+
+type cookieKV struct{ Name, Value string }
+
+// parseCookieString parses "name=value; name2=value2" into ordered KV pairs.
+// Values containing semicolons in quoted strings are not currently supported;
+// LinkedIn cookies don't use that.
+func parseCookieString(s string) []cookieKV {
+	var out []cookieKV
+	for _, raw := range strings.Split(s, ";") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		eq := strings.IndexByte(raw, '=')
+		if eq <= 0 {
+			continue
+		}
+		out = append(out, cookieKV{
+			Name:  strings.TrimSpace(raw[:eq]),
+			Value: strings.TrimSpace(raw[eq+1:]),
+		})
+	}
+	return out
 }
 
 // Option configures a Client.
@@ -108,9 +220,30 @@ func WithHTTPClient(hc *http.Client) Option {
 }
 
 // WithMinRequestGap sets the minimum delay between consecutive requests.
-// Default: 300ms.
+// Default: 300ms. Ignored when WithHumanPacing is also provided.
 func WithMinRequestGap(d time.Duration) Option {
 	return func(c *Client) { c.minGap = d }
+}
+
+// WithBrowserProfile pins the request fingerprint (User-Agent, sec-ch-ua,
+// timezone, display dimensions, x-li-track) to a specific browser profile.
+// Use MacChromePT() / WindowsChromeET() / a custom BrowserProfile.
+//
+// Default: MacChromePT(). Recommended: pin per burner account so the
+// fingerprint stays consistent across runs.
+func WithBrowserProfile(bp BrowserProfile) Option {
+	return func(c *Client) { c.browser = bp }
+}
+
+// WithHumanPacing enables stochastic, human-like request pacing — randomised
+// gap, periodic reading pauses, occasional long distractions, working-hours
+// window, and a daily request budget. Strongly recommended when scraping with
+// any single account, especially burner accounts.
+//
+// Pass DefaultBurnerPacing(loc) for a sensible starting point, or build a
+// HumanPacing manually for custom rhythms.
+func WithHumanPacing(p HumanPacing) Option {
+	return func(c *Client) { c.pacer = newPacer(p) }
 }
 
 // RateLimit returns a snapshot of the most recently observed rate-limit state.
@@ -118,4 +251,13 @@ func (c *Client) RateLimit() RateLimitState {
 	c.rlMu.Lock()
 	defer c.rlMu.Unlock()
 	return c.rlState
+}
+
+// RequestsRemaining returns how many calls are left under the daily budget,
+// or 0 if pacing/budget are not configured.
+func (c *Client) RequestsRemaining() int {
+	if c.pacer == nil {
+		return 0
+	}
+	return c.pacer.requestsRemaining()
 }

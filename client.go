@@ -26,6 +26,12 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 		return nil, ErrInvalidAuth
 	}
 
+	if err := c.warmUp(ctx); err != nil {
+		// warm-up failure is fatal — without it Voyager calls almost always
+		// trip the bot detector, since they look like out-of-context API hits.
+		return nil, err
+	}
+
 	attempts := c.maxRetries
 	if attempts <= 0 {
 		attempts = 1
@@ -61,9 +67,8 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 }
 
 func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, error) {
-	c.waitForGap(ctx)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if err := c.gateBeforeRequest(ctx); err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
@@ -71,17 +76,11 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/vnd.linkedin.normalized+json+2.1")
-	req.Header.Set("Accept-Language", "en-GB,en-US;q=0.9,en;q=0.8")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
-	req.Header.Set("csrf-token", c.auth.CSRF)
-	req.Header.Set("x-li-lang", "en_US")
-	req.Header.Set("x-restli-protocol-version", "2.0.0")
-	req.Header.Set("x-li-track", `{"clientVersion":"1.13.35368","mpVersion":"1.13.35368","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
-	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_search_srp_people;0")
-	req.Header.Set("x-li-pem-metadata", "Voyager - People SRP=search-results")
-	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))
+	headers := make(map[string]string, 16)
+	c.applyVoyagerHeaders(headers, requestURL, false)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -89,61 +88,54 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	}
 	defer resp.Body.Close()
 
+	c.absorbSetCookies(resp)
 	c.updateRateLimit(resp.Header)
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		// success
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, ErrUnauthorized
-	case resp.StatusCode == http.StatusNotFound:
-		return nil, ErrNotFound
-	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		c.rlMu.Lock()
-		c.rlState.Remaining = 0
-		c.rlState.RetryAfter = wait
-		if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
-			c.rlState.Reset = time.Now().Add(wait)
-		}
-		c.rlMu.Unlock()
-		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
-		}
-		c.gapMu.Unlock()
-		return nil, &retryAfterError{wait: wait, err: ErrRateLimited}
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
-	default:
-		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
+
+	if err := c.classifyResponse(resp, requestURL); err != nil {
+		return nil, err
 	}
 
-	return readResponseBody(resp)
+	body, rerr := readResponseBody(resp)
+	if rerr != nil {
+		return nil, rerr
+	}
+
+	if err := detectRestrictionInBody(body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 // doPublicGet performs an unauthenticated GET against a LinkedIn public endpoint
-// (no Voyager headers, no session cookies). Honours the client's min-request gap
-// so we stay polite even on public routes.
+// (no Voyager headers, no session cookies). Honours the client's pacing.
 func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, error) {
-	c.waitForGap(ctx)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if err := c.gateBeforeRequest(ctx); err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
 	}
-	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("User-Agent", c.browser.UserAgent)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Accept-Language", c.browser.AcceptLanguage)
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("Referer", referrerFor(requestURL))
+	req.Header.Set("sec-ch-ua", c.browser.SecChUA)
+	req.Header.Set("sec-ch-ua-mobile", c.browser.SecChUAMobile)
+	req.Header.Set("sec-ch-ua-platform", c.browser.SecChUAPlatform)
+	req.Header.Set("sec-fetch-dest", "empty")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("sec-fetch-site", "same-origin")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
 	}
 	defer resp.Body.Close()
+
+	c.absorbSetCookies(resp)
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
@@ -151,10 +143,9 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return nil, &retryAfterError{
-			wait: parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second),
-			err:  ErrRateLimited,
-		}
+		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
+		c.pacer.applyServerBackoff(wait)
+		return nil, &retryAfterError{wait: wait, err: ErrRateLimited}
 	case resp.StatusCode >= 500:
 		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
@@ -186,6 +177,10 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
 	if c.auth.LiAt == "" || c.auth.CSRF == "" {
 		return nil, ErrInvalidAuth
+	}
+
+	if err := c.warmUp(ctx); err != nil {
+		return nil, err
 	}
 
 	attempts := c.maxRetries
@@ -223,9 +218,8 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 }
 
 func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
-	c.waitForGap(ctx)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if err := c.gateBeforeRequest(ctx); err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payload))
@@ -233,15 +227,11 @@ func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload [
 		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/vnd.linkedin.normalized+json+2.1")
-	req.Header.Set("csrf-token", c.auth.CSRF)
-	req.Header.Set("x-li-lang", "en_US")
-	req.Header.Set("x-restli-protocol-version", "2.0.0")
-	req.Header.Set("x-li-track", `{"clientVersion":"1.13.9814","mpVersion":"1.13.9814","osName":"web","timezoneOffset":0,"timezone":"Etc/UTC","deviceFormFactor":"DESKTOP","mpName":"voyager-web","displayDensity":1,"displayWidth":1920,"displayHeight":1080}`)
-	req.Header.Set("x-li-page-instance", "urn:li:page:d_flagship3_search_srp_people;0")
-	req.Header.Set("Cookie", fmt.Sprintf(`li_at=%s; JSESSIONID="%s"`, c.auth.LiAt, c.auth.JSESSIONID))
+	headers := make(map[string]string, 16)
+	c.applyVoyagerHeaders(headers, requestURL, true)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -249,14 +239,74 @@ func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload [
 	}
 	defer resp.Body.Close()
 
+	c.absorbSetCookies(resp)
 	c.updateRateLimit(resp.Header)
+
+	if err := c.classifyResponse(resp, requestURL); err != nil {
+		return nil, err
+	}
+
+	body, rerr := readResponseBody(resp)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := detectRestrictionInBody(body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// gateBeforeRequest applies humanized pacing (or the legacy minGap path),
+// returning errors from the daily budget / working-hours guard.
+func (c *Client) gateBeforeRequest(ctx context.Context) error {
+	if c.pacer != nil {
+		return c.pacer.wait(ctx)
+	}
+	c.waitForGap(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return nil
+}
+
+// classifyResponse maps an HTTP response to one of our sentinel errors,
+// detecting account restrictions, checkpoints, redirects to the login wall,
+// and rate-limit responses. Returns nil if the response is a normal 2xx.
+func (c *Client) classifyResponse(resp *http.Response, requestURL string) error {
 	switch {
 	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated:
-		// success
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, ErrUnauthorized
+		ct := strings.ToLower(resp.Header.Get("Content-Type"))
+		// LinkedIn sometimes returns the restriction page as 200 OK with HTML
+		// even for Voyager API URLs. Catch it before downstream parsing
+		// chokes on non-JSON.
+		if strings.Contains(ct, "text/html") {
+			return ErrAccountRestricted
+		}
+		return nil
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		loc := resp.Header.Get("Location")
+		switch {
+		case strings.Contains(loc, "/checkpoint/"):
+			return ErrChallengeRequired
+		case strings.Contains(loc, "/uas/login"), strings.Contains(loc, "/login"):
+			return ErrUnauthorized
+		case strings.Contains(loc, "account-restricted"), strings.Contains(loc, "/restricted"):
+			return ErrAccountRestricted
+		default:
+			return ErrUnauthorized
+		}
+	case resp.StatusCode == http.StatusUnauthorized:
+		return ErrUnauthorized
+	case resp.StatusCode == http.StatusForbidden:
+		// 403 on Voyager often means "account is restricted" — distinguish
+		// from a generic auth failure by sniffing the response body.
+		body, _ := readResponseBody(resp)
+		if detectRestrictionInBody(body) != nil {
+			return ErrAccountRestricted
+		}
+		return ErrUnauthorized
 	case resp.StatusCode == http.StatusNotFound:
-		return nil, ErrNotFound
+		return ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
 		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
 		c.rlMu.Lock()
@@ -266,19 +316,121 @@ func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload [
 			c.rlState.Reset = time.Now().Add(wait)
 		}
 		c.rlMu.Unlock()
+		c.pacer.applyServerBackoff(wait)
 		c.gapMu.Lock()
 		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
 			c.lastReqAt = earliest
 		}
 		c.gapMu.Unlock()
-		return nil, &retryAfterError{wait: wait, err: ErrRateLimited}
+		return &retryAfterError{wait: wait, err: ErrRateLimited}
 	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
+		return fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
-		return nil, &nonRetryableError{fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)}
+		return &nonRetryableError{fmt.Errorf("%w: HTTP %d (%s)", ErrRequestFailed, resp.StatusCode, requestURL)}
+	}
+}
+
+// detectRestrictionInBody returns ErrAccountRestricted / ErrChallengeRequired
+// if the response body contains the canonical restriction or checkpoint
+// markers. Used to upgrade ambiguous 200/403 responses.
+func detectRestrictionInBody(body []byte) error {
+	if len(body) == 0 {
+		return nil
+	}
+	low := strings.ToLower(string(body[:min(4096, len(body))]))
+	if strings.Contains(low, "your account is temporarily restricted") ||
+		strings.Contains(low, "account-restricted") ||
+		strings.Contains(low, "we detected the use of") ||
+		strings.Contains(low, "we've restricted your account") ||
+		strings.Contains(low, "weve restricted your account") {
+		return ErrAccountRestricted
+	}
+	if strings.Contains(low, "/checkpoint/challenge") ||
+		strings.Contains(low, "security verification") ||
+		strings.Contains(low, "let's do a quick security check") {
+		return ErrChallengeRequired
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// absorbSetCookies refreshes the cookie jar from the response so JSESSIONID
+// rotation, lidc updates, etc. are picked up automatically. Runs even when
+// the http.Client already has a Jar attached so user-supplied transports
+// (which sometimes drop the jar) still update our authoritative copy.
+func (c *Client) absorbSetCookies(resp *http.Response) {
+	if c.jar == nil {
+		return
+	}
+	c.jar.SetCookies(linkedinBaseURL, resp.Cookies())
+}
+
+// warmUp performs a one-time GET /feed/ on first authenticated use to look
+// like a real session opening. Without this Voyager API hits look like a
+// process talking directly to the API with no UI context, which LinkedIn's
+// detection penalises heavily.
+func (c *Client) warmUp(ctx context.Context) error {
+	if c.warmedUp.Load() {
+		return nil
+	}
+	if err := c.gateBeforeRequest(ctx); err != nil {
+		return err
 	}
 
-	return readResponseBody(resp)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/feed/", nil)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
+	bp := c.browser
+	req.Header.Set("User-Agent", bp.UserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", bp.AcceptLanguage)
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("sec-ch-ua", bp.SecChUA)
+	req.Header.Set("sec-ch-ua-mobile", bp.SecChUAMobile)
+	req.Header.Set("sec-ch-ua-platform", bp.SecChUAPlatform)
+	req.Header.Set("sec-fetch-dest", "document")
+	req.Header.Set("sec-fetch-mode", "navigate")
+	req.Header.Set("sec-fetch-site", "none")
+	req.Header.Set("sec-fetch-user", "?1")
+	req.Header.Set("upgrade-insecure-requests", "1")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: warm-up: %v", ErrRequestFailed, err)
+	}
+	defer resp.Body.Close()
+	c.absorbSetCookies(resp)
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+
+	// If the warm-up itself trips a restriction page, fail fast — the account
+	// is already burned and there's no point hitting Voyager.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc := resp.Header.Get("Location")
+		switch {
+		case strings.Contains(loc, "/checkpoint/"):
+			return ErrChallengeRequired
+		case strings.Contains(loc, "/uas/login"), strings.Contains(loc, "/login"):
+			return ErrUnauthorized
+		case strings.Contains(loc, "account-restricted"), strings.Contains(loc, "/restricted"):
+			return ErrAccountRestricted
+		}
+	}
+	if resp.StatusCode == http.StatusOK {
+		if err := detectRestrictionInBody(body); err != nil {
+			return err
+		}
+	}
+
+	c.warmedUp.Store(true)
+	return nil
 }
 
 func (c *Client) backoff(attempt int) time.Duration {
@@ -306,6 +458,10 @@ func isNonRecoverable(err error) bool {
 	var nre *nonRetryableError
 	return errors.As(err, &nre) ||
 		errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrAccountRestricted) ||
+		errors.Is(err, ErrChallengeRequired) ||
+		errors.Is(err, ErrDailyBudget) ||
+		errors.Is(err, ErrOutsideHours) ||
 		errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrInvalidParams)
@@ -391,6 +547,7 @@ func (c *Client) adaptiveGap() time.Duration {
 }
 
 // waitForGap enforces the min request gap, honouring rate-limit state adaptively.
+// Used as the legacy fallback when WithHumanPacing is not configured.
 func (c *Client) waitForGap(ctx context.Context) {
 	gap := c.adaptiveGap()
 	c.gapMu.Lock()
