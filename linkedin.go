@@ -58,6 +58,7 @@ type Client struct {
 	browser        BrowserProfile
 	role           Role
 	proxyURL       *url.URL
+	cooldownUntil  time.Time // operator-imposed cool-off; ErrInCooldown until this passes
 	searchQueryID  string
 	profileQueryID string
 	maxRetries     int
@@ -321,6 +322,25 @@ func WithProxy(proxyURL *url.URL) Option {
 // wrong binary" a startup error instead of a quiet account-restriction.
 func WithRole(r Role) Option {
 	return func(c *Client) { c.role = r }
+}
+
+// WithCooldownUntil refuses every authenticated request with ErrInCooldown
+// until the given time passes. Use after a LinkedIn restriction to prevent
+// re-poking the account before the auto-lift window — even an accidental
+// agent retry can reset LinkedIn's restriction timer.
+//
+// A zero time disables the cooldown (default). The check happens before
+// any HTTP work, so cooldown'd requests are essentially free.
+func WithCooldownUntil(t time.Time) Option {
+	return func(c *Client) { c.cooldownUntil = t }
+}
+
+// CooldownUntil returns the configured cooldown deadline (zero if none).
+func (c *Client) CooldownUntil() time.Time { return c.cooldownUntil }
+
+// InCooldown reports whether the client is currently refusing requests.
+func (c *Client) InCooldown() bool {
+	return !c.cooldownUntil.IsZero() && time.Now().Before(c.cooldownUntil)
 }
 
 // Role returns the role this client was tagged with at construction.
