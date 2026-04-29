@@ -9,6 +9,7 @@
 package linkedin
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -32,12 +33,31 @@ type Auth struct {
 	ExtraCookies string // optional; additional browser cookies appended verbatim (e.g. "bcookie=...; bscookie=...")
 }
 
+// Role classifies a client by intended use. The library does not enforce
+// roles itself — callers use AssertRole at startup to refuse to perform a
+// scrape with primary cookies (or vice versa). See the multi-account
+// playbook for the strict-separation rationale.
+type Role string
+
+const (
+	// RoleScraper is for read-only burner accounts that perform people
+	// search and profile fetches under stealth pacing.
+	RoleScraper Role = "scraper"
+	// RolePrimary is for the high-trust account that handles outbound
+	// writes (InMails, messages, group posts, accepting connections).
+	RolePrimary Role = "primary"
+	// RoleUnspecified is the zero value; AssertRole always allows.
+	RoleUnspecified Role = ""
+)
+
 // Client is a LinkedIn Voyager API client.
 type Client struct {
 	auth           Auth
 	httpClient     *http.Client
 	jar            *cookiejar.Jar
 	browser        BrowserProfile
+	role           Role
+	proxyURL       *url.URL
 	searchQueryID  string
 	profileQueryID string
 	maxRetries     int
@@ -116,7 +136,29 @@ func New(auth Auth, opts ...Option) *Client {
 		c.seedJar()
 	}
 
+	// Wire the proxy through the http.Client's transport, if configured.
+	// We clone the existing transport to avoid mutating shared state and
+	// preserve any TLS / connection pooling tuning the caller set.
+	if c.proxyURL != nil {
+		c.applyProxy()
+	}
+
 	return c
+}
+
+// applyProxy attaches c.proxyURL to the http.Client's transport, cloning
+// http.DefaultTransport when none is configured. Safe to call multiple times
+// — subsequent calls overwrite the Proxy func without disturbing other
+// transport settings.
+func (c *Client) applyProxy() {
+	var base *http.Transport
+	if existing, ok := c.httpClient.Transport.(*http.Transport); ok && existing != nil {
+		base = existing.Clone()
+	} else {
+		base = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	base.Proxy = http.ProxyURL(c.proxyURL)
+	c.httpClient.Transport = base
 }
 
 func jarFromClient(hc *http.Client) *cookiejar.Jar {
@@ -244,6 +286,48 @@ func WithBrowserProfile(bp BrowserProfile) Option {
 // HumanPacing manually for custom rhythms.
 func WithHumanPacing(p HumanPacing) Option {
 	return func(c *Client) { c.pacer = newPacer(p) }
+}
+
+// WithProxy routes all client traffic through the given proxy URL. Use to
+// pin a burner account to a specific egress IP (residential proxy, mobile
+// proxy, etc.) — LinkedIn fingerprints the IP separately from cookies, so
+// multiple burners on one IP all get correlated by their bot detection.
+//
+// Supports user:pass auth in the URL: http://user:pass@host:port. Composes
+// cleanly with WithHTTPClient — the proxy is applied to the client's
+// transport, preserving any TLS/timeout/connection-pool tuning.
+func WithProxy(proxyURL *url.URL) Option {
+	return func(c *Client) { c.proxyURL = proxyURL }
+}
+
+// WithRole tags the client by intended use. The library does not enforce
+// roles itself — callers use AssertRole at startup to refuse to perform a
+// scrape with primary cookies (or vice versa).
+//
+// Strongly recommended for any deployment that has both a primary outreach
+// account and burner scraping accounts: it makes "wrong cookies in the
+// wrong binary" a startup error instead of a quiet account-restriction.
+func WithRole(r Role) Option {
+	return func(c *Client) { c.role = r }
+}
+
+// Role returns the role this client was tagged with at construction.
+// Returns RoleUnspecified if WithRole was not used.
+func (c *Client) Role() Role { return c.role }
+
+// AssertRole returns an error if the client's role does not match want.
+// Returns nil if the client has no role set (RoleUnspecified) or if the
+// roles match. Designed to be called at command startup:
+//
+//	if err := client.AssertRole(linkedin.RoleScraper); err != nil {
+//	    log.Fatalf("refusing to scrape with non-scraper credentials: %v", err)
+//	}
+func (c *Client) AssertRole(want Role) error {
+	if c.role == RoleUnspecified || c.role == want {
+		return nil
+	}
+	return fmt.Errorf("%w: client role is %q, caller requires %q",
+		ErrRoleMismatch, c.role, want)
 }
 
 // RateLimit returns a snapshot of the most recently observed rate-limit state.

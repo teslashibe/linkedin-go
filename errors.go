@@ -3,12 +3,13 @@ package linkedin
 import "errors"
 
 var (
-	ErrInvalidAuth      = errors.New("linkedin: invalid auth credentials")
-	ErrUnauthorized     = errors.New("linkedin: unauthorized")
+	ErrInvalidAuth       = errors.New("linkedin: invalid auth credentials")
+	ErrUnauthorized      = errors.New("linkedin: unauthorized")
 	ErrAccountRestricted = errors.New("linkedin: account restricted by LinkedIn — do not retry")
 	ErrChallengeRequired = errors.New("linkedin: checkpoint/challenge required — solve in a real browser")
-	ErrDailyBudget      = errors.New("linkedin: daily request budget exhausted")
-	ErrOutsideHours     = errors.New("linkedin: outside configured working hours")
+	ErrDailyBudget       = errors.New("linkedin: daily request budget exhausted")
+	ErrOutsideHours      = errors.New("linkedin: outside configured working hours")
+	ErrRoleMismatch      = errors.New("linkedin: client role does not match required role")
 	ErrRateLimited      = errors.New("linkedin: rate limited")
 	ErrNotFound         = errors.New("linkedin: not found")
 	ErrInvalidParams    = errors.New("linkedin: invalid parameters")
