@@ -28,7 +28,11 @@ import (
 // opaquely. A residential egress (ProxyURL) greatly reduces challenge rate.
 
 const (
-	loginPageURL   = "https://www.linkedin.com/login"
+	// The classic server-rendered login form (with loginCsrfParam + the
+	// hidden fields we scrape) is served at /checkpoint/lg/login. The bare
+	// /login route is now a JS-rendered React shell with no hidden inputs, so
+	// scraping it fails with "loginCsrfParam not found".
+	loginPageURL   = "https://www.linkedin.com/checkpoint/lg/login"
 	loginSubmitURL = "https://www.linkedin.com/checkpoint/lg/login-submit"
 	loginUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 )
