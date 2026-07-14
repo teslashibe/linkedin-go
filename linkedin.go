@@ -155,6 +155,7 @@ func New(auth Auth, opts ...Option) *Client {
 	if c.proxyURL != nil {
 		c.applyProxy()
 	}
+	c.ensureJSESSIONQuoteTransport()
 
 	return c
 }
@@ -187,13 +188,20 @@ func jarFromClient(hc *http.Client) *cookiejar.Jar {
 // seedJar pushes Auth.LiAt + Auth.JSESSIONID + parsed ExtraCookies into the
 // jar so subsequent requests carry them automatically. Call once after
 // constructing the client.
+//
+// Cookie.Value must NOT contain `"` — Go's net/http strips quoted bytes and
+// logs "invalid byte '"' in Cookie.Value", which corrupts LinkedIn session
+// cookies (especially bcookie / quoted Playwright exports). JSESSIONID is
+// re-quoted on the wire by jsessionQuoteTransport.
 func (c *Client) seedJar() {
 	if c.jar == nil {
 		return
 	}
+	jsid := strings.ReplaceAll(c.auth.JSESSIONID, `"`, "")
+	liAt := strings.ReplaceAll(c.auth.LiAt, `"`, "")
 	cookies := []*http.Cookie{
-		{Name: "li_at", Value: c.auth.LiAt, Domain: ".linkedin.com", Path: "/", Secure: true, HttpOnly: true},
-		{Name: "JSESSIONID", Value: `"` + c.auth.JSESSIONID + `"`, Domain: ".linkedin.com", Path: "/", Secure: true},
+		{Name: "li_at", Value: liAt, Domain: ".linkedin.com", Path: "/", Secure: true, HttpOnly: true},
+		{Name: "JSESSIONID", Value: jsid, Domain: ".linkedin.com", Path: "/", Secure: true},
 	}
 	for _, kv := range parseCookieString(c.auth.ExtraCookies) {
 		// Skip li_at / JSESSIONID if the caller accidentally repeats them.
@@ -202,7 +210,7 @@ func (c *Client) seedJar() {
 		}
 		cookies = append(cookies, &http.Cookie{
 			Name:   kv.Name,
-			Value:  kv.Value,
+			Value:  strings.ReplaceAll(kv.Value, `"`, ""),
 			Domain: ".linkedin.com",
 			Path:   "/",
 			Secure: true,
@@ -215,7 +223,8 @@ type cookieKV struct{ Name, Value string }
 
 // parseCookieString parses "name=value; name2=value2" into ordered KV pairs.
 // Values containing semicolons in quoted strings are not currently supported;
-// LinkedIn cookies don't use that.
+// LinkedIn cookies don't use that. Surrounding quotes are stripped so values
+// are safe for net/http Cookie.Value.
 func parseCookieString(s string) []cookieKV {
 	var out []cookieKV
 	for _, raw := range strings.Split(s, ";") {
@@ -229,10 +238,52 @@ func parseCookieString(s string) []cookieKV {
 		}
 		out = append(out, cookieKV{
 			Name:  strings.TrimSpace(raw[:eq]),
-			Value: strings.TrimSpace(raw[eq+1:]),
+			Value: strings.ReplaceAll(strings.TrimSpace(raw[eq+1:]), `"`, ""),
 		})
 	}
 	return out
+}
+
+// jsessionQuoteTransport rewrites the outbound Cookie header so JSESSIONID is
+// quoted on the wire (LinkedIn's historical format) without putting `"` into
+// http.Cookie.Value (which Go rejects).
+type jsessionQuoteTransport struct {
+	base http.RoundTripper
+}
+
+func (t *jsessionQuoteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if h := req.Header.Get("Cookie"); h != "" {
+		req.Header.Set("Cookie", quoteJSESSIONIDCookie(h))
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+func quoteJSESSIONIDCookie(h string) string {
+	parts := strings.Split(h, ";")
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		if len(p) < 11 || !strings.EqualFold(p[:10], "JSESSIONID") || p[10] != '=' {
+			continue
+		}
+		v := strings.Trim(p[11:], `"`)
+		parts[i] = `JSESSIONID="` + v + `"`
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (c *Client) ensureJSESSIONQuoteTransport() {
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if _, ok := base.(*jsessionQuoteTransport); ok {
+		return
+	}
+	c.httpClient.Transport = &jsessionQuoteTransport{base: base}
 }
 
 // Option configures a Client.

@@ -38,20 +38,20 @@ func (r RateLimitState) ResetIn() time.Duration {
 
 // Profile is the clean domain model returned by SearchPeople and GetProfile.
 type Profile struct {
-	PublicID       string         `json:"publicId"`
-	URN            string         `json:"urn,omitempty"`
-	FirstName      string         `json:"firstName"`
-	LastName       string         `json:"lastName"`
-	Headline       string         `json:"headline,omitempty"`
-	Summary        string         `json:"summary,omitempty"`
-	Location       Location       `json:"location,omitempty"`
-	ProfileURL     string         `json:"profileUrl,omitempty"`
-	PictureURL     string         `json:"pictureUrl,omitempty"`
-	Connections    int            `json:"connections,omitempty"`
-	Followers      int            `json:"followers,omitempty"`
-	Experience     []Experience   `json:"experience,omitempty"`
-	Education      []Education    `json:"education,omitempty"`
-	Skills         []string       `json:"skills,omitempty"`
+	PublicID       string          `json:"publicId"`
+	URN            string          `json:"urn,omitempty"`
+	FirstName      string          `json:"firstName"`
+	LastName       string          `json:"lastName"`
+	Headline       string          `json:"headline,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	Location       Location        `json:"location,omitempty"`
+	ProfileURL     string          `json:"profileUrl,omitempty"`
+	PictureURL     string          `json:"pictureUrl,omitempty"`
+	Connections    int             `json:"connections,omitempty"`
+	Followers      int             `json:"followers,omitempty"`
+	Experience     []Experience    `json:"experience,omitempty"`
+	Education      []Education     `json:"education,omitempty"`
+	Skills         []string        `json:"skills,omitempty"`
 	Certifications []Certification `json:"certifications,omitempty"`
 }
 
@@ -141,6 +141,58 @@ type CompanyResult struct {
 type SchoolResult struct {
 	URN  string `json:"urn"`
 	Name string `json:"name"`
+}
+
+// Post is the normalized, read-only view of a LinkedIn feed post.
+type Post struct {
+	URN         string          `json:"urn"`
+	ActivityURN string          `json:"activityUrn,omitempty"`
+	Text        string          `json:"text"`
+	Author      PostAuthor      `json:"author"`
+	CreatedAt   int64           `json:"createdAt,omitempty"`
+	URL         string          `json:"url,omitempty"`
+	Engagement  PostEngagement  `json:"engagement,omitempty"`
+	Raw         json.RawMessage `json:"raw,omitempty"`
+}
+
+// PostAuthor identifies the member or organization that authored a post or comment.
+type PostAuthor struct {
+	URN        string `json:"urn,omitempty"`
+	PublicID   string `json:"publicId,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Headline   string `json:"headline,omitempty"`
+	ProfileURL string `json:"profileUrl,omitempty"`
+}
+
+// PostEngagement contains the public counters attached to a post.
+type PostEngagement struct {
+	LikeCount    int `json:"likeCount,omitempty"`
+	CommentCount int `json:"commentCount,omitempty"`
+	ShareCount   int `json:"shareCount,omitempty"`
+	ViewCount    int `json:"viewCount,omitempty"`
+}
+
+// PostComment is a normalized LinkedIn comment, including thread pointers when supplied.
+type PostComment struct {
+	URN       string     `json:"urn"`
+	PostURN   string     `json:"postUrn,omitempty"`
+	ParentURN string     `json:"parentUrn,omitempty"`
+	Text      string     `json:"text"`
+	Author    PostAuthor `json:"author"`
+	CreatedAt int64      `json:"createdAt,omitempty"`
+	LikeCount int        `json:"likeCount,omitempty"`
+}
+
+type PostCommentParams struct {
+	PostURN string
+	Start   int
+	Count   int // default 20, max 50
+}
+
+type UserPostParams struct {
+	Member string // member/profile URN or vanity name
+	Start  int
+	Count  int // default 5, max 20
 }
 
 // --- Group types ---
@@ -385,9 +437,9 @@ type geoLocationResponse struct {
 }
 
 type geoResponse struct {
-	DefaultLocalizedName         string `json:"defaultLocalizedName,omitempty"`
+	DefaultLocalizedName                   string `json:"defaultLocalizedName,omitempty"`
 	DefaultLocalizedNameWithoutCountryName string `json:"defaultLocalizedNameWithoutCountryName,omitempty"`
-	CountryURN                   string `json:"countryUrn,omitempty"`
+	CountryURN                             string `json:"countryUrn,omitempty"`
 }
 
 type profilePictureResponse struct {
@@ -396,8 +448,8 @@ type profilePictureResponse struct {
 }
 
 type vectorImageResponse struct {
-	RootURL   string             `json:"rootUrl,omitempty"`
-	Artifacts []vectorArtifact   `json:"artifacts,omitempty"`
+	RootURL   string           `json:"rootUrl,omitempty"`
+	Artifacts []vectorArtifact `json:"artifacts,omitempty"`
 }
 
 type vectorArtifact struct {

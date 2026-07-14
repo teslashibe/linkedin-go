@@ -462,7 +462,19 @@ func (c *Client) absorbSetCookies(resp *http.Response) {
 	if c.jar == nil {
 		return
 	}
-	c.jar.SetCookies(linkedinBaseURL, resp.Cookies())
+	cks := resp.Cookies()
+	for _, ck := range cks {
+		ck.Value = strings.ReplaceAll(ck.Value, `"`, "")
+	}
+	c.jar.SetCookies(linkedinBaseURL, cks)
+}
+
+// HealthCheck verifies the authenticated session is live by opening /feed/.
+// Prefer this over Voyager list endpoints (messaging/groups) for login verify —
+// those return opaque 404/500 for new or lightly-used accounts even when the
+// browser session is valid.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	return c.warmUp(ctx)
 }
 
 // warmUp performs a one-time GET /feed/ on first authenticated use to look

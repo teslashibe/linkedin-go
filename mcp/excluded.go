@@ -12,6 +12,7 @@ package mcp
 //   - if the method is unsuitable for an agent (internal observability,
 //     auth-only helper, etc.), add it here with a reason
 var Excluded = map[string]string{
+	"HealthCheck":       "session verification is owned by the host so it can coordinate login and challenge UI",
 	"RateLimit":         "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
 	"RequestsRemaining": "internal observability for the human pacer; surface via the host's status reporting, not as a callable tool",
 	"PendingRequests":   "internal observability for the per-client serialization queue; surface via the host's status reporting, not as a callable tool",

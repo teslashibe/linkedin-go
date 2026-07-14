@@ -37,9 +37,10 @@ func (Provider) Platform() string { return "linkedin" }
 
 // Tools returns every linkedin-go MCP tool, in registration order.
 func (Provider) Tools() []mcptool.Tool {
-	out := make([]mcptool.Tool, 0, len(searchTools)+len(profileTools)+len(groupTools)+len(messagingTools)+len(resolveTools))
+	out := make([]mcptool.Tool, 0, len(searchTools)+len(profileTools)+len(postTools)+len(groupTools)+len(messagingTools)+len(resolveTools))
 	out = append(out, searchTools...)
 	out = append(out, profileTools...)
+	out = append(out, postTools...)
 	out = append(out, groupTools...)
 	out = append(out, messagingTools...)
 	out = append(out, resolveTools...)
