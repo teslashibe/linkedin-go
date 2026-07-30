@@ -2,6 +2,7 @@ package linkedin
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -16,9 +17,9 @@ import (
 type HumanPacing struct {
 	// BaseGap is the centre of the per-request delay distribution. Each gap is
 	// sampled uniformly in [BaseGap*JitterLow, BaseGap*JitterHigh].
-	BaseGap     time.Duration
-	JitterLow   float64 // multiplier for the lower bound (e.g. 0.6)
-	JitterHigh  float64 // multiplier for the upper bound (e.g. 2.5)
+	BaseGap    time.Duration
+	JitterLow  float64 // multiplier for the lower bound (e.g. 0.6)
+	JitterHigh float64 // multiplier for the upper bound (e.g. 2.5)
 
 	// ReadingPauseEvery is the *expected* number of requests between
 	// "reading pauses" — short interruptions that simulate the user reading a
@@ -37,8 +38,8 @@ type HumanPacing struct {
 	// WorkingHours, if non-nil, restricts requests to a daily window. Outside
 	// the window the pacer either sleeps until the window opens or returns
 	// ErrOutsideHours, depending on SleepUntilOpen.
-	WorkingHours    *WorkingHoursWindow
-	SleepUntilOpen  bool
+	WorkingHours   *WorkingHoursWindow
+	SleepUntilOpen bool
 
 	// DailyBudget hard-caps the number of authenticated Voyager requests per
 	// 24-hour rolling window. 0 disables the cap. Once exceeded, the pacer
@@ -157,10 +158,10 @@ type pacer struct {
 	policy HumanPacing
 	rng    *rand.Rand
 
-	mu             sync.Mutex
-	lastReq        time.Time
-	requestsToday  int
-	dayKey         string // YYYY-MM-DD in policy.WorkingHours.Location
+	mu                sync.Mutex
+	lastReq           time.Time
+	requestsToday     int
+	dayKey            string // YYYY-MM-DD in policy.WorkingHours.Location
 	reqSinceReadPause int
 	reqSinceDistract  int
 }
@@ -245,6 +246,13 @@ func (p *pacer) wait(ctx context.Context) error {
 	p.mu.Unlock()
 
 	if sleepFor > 0 {
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining < sleepFor {
+				return fmt.Errorf("%w: pacing wait %s exceeds remaining deadline %s",
+					ErrTimeout, sleepFor.Round(time.Millisecond), remaining.Round(time.Millisecond))
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

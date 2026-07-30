@@ -31,7 +31,7 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 
 	release := c.acquireRequestSlot(ctx)
 	if release == nil {
-		return nil, ctx.Err()
+		return nil, mapCtxErr(ctx.Err())
 	}
 	defer release()
 
@@ -57,7 +57,7 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, mapCtxErr(ctx.Err())
 			case <-time.After(wait):
 			}
 		}
@@ -77,7 +77,7 @@ func (c *Client) makeRequest(ctx context.Context, requestURL string) ([]byte, er
 
 func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, error) {
 	if err := c.gateBeforeRequest(ctx); err != nil {
-		return nil, err
+		return nil, mapCtxErr(err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
@@ -202,7 +202,7 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 
 	release := c.acquireRequestSlot(ctx)
 	if release == nil {
-		return nil, ctx.Err()
+		return nil, mapCtxErr(ctx.Err())
 	}
 	defer release()
 
@@ -226,7 +226,7 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, mapCtxErr(ctx.Err())
 			case <-time.After(wait):
 			}
 		}
@@ -246,7 +246,7 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 
 func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
 	if err := c.gateBeforeRequest(ctx); err != nil {
-		return nil, err
+		return nil, mapCtxErr(err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payload))
@@ -287,11 +287,11 @@ func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload [
 // returning errors from the daily budget / working-hours guard.
 func (c *Client) gateBeforeRequest(ctx context.Context) error {
 	if c.pacer != nil {
-		return c.pacer.wait(ctx)
+		return mapCtxErr(c.pacer.wait(ctx))
 	}
 	c.waitForGap(ctx)
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return mapCtxErr(ctx.Err())
 	}
 	return nil
 }
@@ -509,7 +509,7 @@ func (c *Client) warmUp(ctx context.Context) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: warm-up: %v", ErrRequestFailed, err)
+		return wrapWarmUpTransportErr(err)
 	}
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
@@ -569,9 +569,44 @@ func isNonRecoverable(err error) bool {
 		errors.Is(err, ErrDailyBudget) ||
 		errors.Is(err, ErrOutsideHours) ||
 		errors.Is(err, ErrInCooldown) ||
+		errors.Is(err, ErrTimeout) ||
 		errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrInvalidParams)
+}
+
+// mapCtxErr promotes context deadline failures to ErrTimeout so hosts can map
+// a typed retryable class instead of surfacing raw "context deadline exceeded".
+func mapCtxErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrTimeout) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
+		return fmt.Errorf("%w: %v", ErrTimeout, err)
+	}
+	return err
+}
+
+// wrapWarmUpTransportErr maps warm-up /feed/ deadline and EOF transport failures
+// to ErrTimeout (same retryable budget class as deadline preflight).
+func wrapWarmUpTransportErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if mapped := mapCtxErr(err); errors.Is(mapped, ErrTimeout) {
+		return fmt.Errorf("%w: warm-up: %v", ErrTimeout, err)
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "client.timeout") {
+		return fmt.Errorf("%w: warm-up: %v", ErrTimeout, err)
+	}
+	return fmt.Errorf("%w: warm-up: %v", ErrRequestFailed, err)
 }
 
 func parseRetryAfter(val string, fallback time.Duration) time.Duration {

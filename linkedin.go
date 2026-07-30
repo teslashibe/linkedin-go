@@ -68,6 +68,10 @@ type Client struct {
 
 	warmedUp atomic.Bool
 
+	// vanityURN caches vanity-name → member URN resolutions for the life of
+	// this warm affine client so GetUserPosts can skip repeated GetProfile hops.
+	vanityURN sync.Map // string (lower vanity) → string (urn)
+
 	// userAgent is kept for compatibility with WithUserAgent; if set it
 	// overrides browser.UserAgent.
 	userAgent string
