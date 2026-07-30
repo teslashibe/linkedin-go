@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GetPost returns a normalized post for a post/activity URN or LinkedIn post URL.
@@ -69,23 +70,111 @@ func (c *Client) GetUserPosts(ctx context.Context, p UserPostParams) ([]Post, er
 	if count > 20 {
 		return nil, fmt.Errorf("%w: count must be at most 20", ErrInvalidParams)
 	}
+
+	hops := 1
 	if !strings.HasPrefix(member, "urn:li:") {
-		vanity := extractVanityName(member)
+		vanity := normalizeVanityName(member)
 		if vanity == "" {
-			vanity = strings.Trim(member, "/")
+			return nil, fmt.Errorf("%w: member URN or vanity name required", ErrInvalidParams)
 		}
-		profile, err := c.GetProfile(ctx, vanity)
-		if err != nil {
-			return nil, err
+		if _, ok := c.vanityURN.Load(strings.ToLower(vanity)); !ok {
+			hops = 2
 		}
-		member = profile.URN
 	}
-	reqURL := fmt.Sprintf("%s/identity/profileUpdatesV2?profileUrn=%s&q=memberShareFeed&start=%d&count=%d", apiBase, url.QueryEscape(member), p.Start, count)
+	if err := c.requireDeadlineBudget(ctx, hops); err != nil {
+		return nil, err
+	}
+
+	resolved, err := c.resolveMemberURN(ctx, member)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/identity/profileUpdatesV2?profileUrn=%s&q=memberShareFeed&start=%d&count=%d", apiBase, url.QueryEscape(resolved), p.Start, count)
 	body, err := c.makeRequest(ctx, reqURL)
 	if err != nil {
 		return nil, err
 	}
 	return parsePosts(body, "")
+}
+
+// resolveMemberURN returns a member/profile URN, using a session vanity cache
+// when the caller passes a vanity name or profile URL.
+func (c *Client) resolveMemberURN(ctx context.Context, member string) (string, error) {
+	member = strings.TrimSpace(member)
+	if strings.HasPrefix(member, "urn:li:") {
+		return member, nil
+	}
+	vanity := normalizeVanityName(member)
+	if vanity == "" {
+		return "", fmt.Errorf("%w: member URN or vanity name required", ErrInvalidParams)
+	}
+	key := strings.ToLower(vanity)
+	if cached, ok := c.vanityURN.Load(key); ok {
+		if urn, _ := cached.(string); urn != "" {
+			return urn, nil
+		}
+	}
+	profile, err := c.GetProfile(ctx, vanity)
+	if err != nil {
+		return "", err
+	}
+	if profile == nil || strings.TrimSpace(profile.URN) == "" {
+		return "", ErrNotFound
+	}
+	c.vanityURN.Store(key, profile.URN)
+	return profile.URN, nil
+}
+
+func normalizeVanityName(member string) string {
+	vanity := extractVanityName(member)
+	if vanity == "" {
+		vanity = strings.Trim(member, "/")
+	}
+	return strings.TrimSpace(vanity)
+}
+
+const defaultHTTPBudget = 8 * time.Second
+
+// requireDeadlineBudget fails fast with ErrTimeout when the remaining context
+// deadline cannot cover warm-up + paced Voyager hops. This avoids burning the
+// caller's budget on multi-second human pacing before the real fetch starts.
+func (c *Client) requireDeadlineBudget(ctx context.Context, voyagerHops int) error {
+	if voyagerHops < 1 {
+		voyagerHops = 1
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return fmt.Errorf("%w: context deadline already exceeded", ErrTimeout)
+	}
+	hops := voyagerHops
+	if !c.warmedUp.Load() {
+		hops++
+	}
+	gap := c.pacingGapCeiling()
+	need := time.Duration(hops) * (gap + defaultHTTPBudget)
+	if remaining < need {
+		return fmt.Errorf("%w: insufficient deadline budget (%s remaining, need %s for %d paced hops)",
+			ErrTimeout, remaining.Round(time.Millisecond), need.Round(time.Millisecond), hops)
+	}
+	return nil
+}
+
+func (c *Client) pacingGapCeiling() time.Duration {
+	if c.pacer != nil && c.pacer.policy.BaseGap > 0 {
+		high := c.pacer.policy.JitterHigh
+		if high < 1 {
+			high = 1
+		}
+		return time.Duration(float64(c.pacer.policy.BaseGap) * high)
+	}
+	if c.minGap > 0 {
+		return c.minGap
+	}
+	return defaultMinGap
 }
 
 func normalizePostURN(identifier string) (string, error) {
