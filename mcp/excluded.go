@@ -15,6 +15,7 @@ var Excluded = map[string]string{
 	"HealthCheck":       "session verification is owned by the host so it can coordinate login and challenge UI",
 	"RateLimit":         "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
 	"RequestsRemaining": "internal observability for the human pacer; surface via the host's status reporting, not as a callable tool",
+	"BudgetExhausted":   "internal observability for the human pacer daily budget; surface via the host's status reporting, not as a callable tool",
 	"PendingRequests":   "internal observability for the per-client serialization queue; surface via the host's status reporting, not as a callable tool",
 	"CooldownUntil":     "internal observability for the operator-imposed cooldown gate; surface via the host's status reporting, not as a callable tool",
 	"InCooldown":        "internal observability for the operator-imposed cooldown gate; surface via the host's status reporting, not as a callable tool",

@@ -85,12 +85,57 @@ client := linkedin.New(auth,
     linkedin.WithRetry(5, time.Second),             // 5 attempts, 1s base backoff
     linkedin.WithQueryIDs("newSearchID", ""),        // override Voyager query IDs
     linkedin.WithUserAgent("custom-agent/1.0"),
+    linkedin.WithProxyURL("http://user:pass@host:port"), // sticky egress per client
     linkedin.WithHTTPClient(&http.Client{Timeout: 60*time.Second}),
 )
 
 // Disable retry entirely
 client := linkedin.New(auth, linkedin.WithRetry(0, 0))
 ```
+
+## Multi-account pool (sticky proxy per account)
+
+Rotate N burner sessions without sharing one IP. Each `Account` owns its own
+cookies, daily budget, fingerprint, and sticky proxy. Acquire a `Lease` for the
+full multi-call unit of work (profile + posts + comments) so affinity stays on
+one identity + IP.
+
+When the pool has more than one account, `ProxyURL` is required on every member.
+
+```go
+pool, err := linkedin.NewPool([]linkedin.Account{
+    {
+        ID: "burner-1",
+        Auth: linkedin.Auth{LiAt: os.Getenv("LI_AT_1"), CSRF: os.Getenv("LI_CSRF_1")},
+        ProxyURL: os.Getenv("LI_PROXY_1"), // sticky residential/mobile
+    },
+    {
+        ID: "burner-2",
+        Auth: linkedin.Auth{LiAt: os.Getenv("LI_AT_2"), CSRF: os.Getenv("LI_CSRF_2")},
+        ProxyURL: os.Getenv("LI_PROXY_2"),
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+lease, err := pool.Acquire(ctx)
+if err != nil {
+    // ErrNoAccountAvailable — all budgets/cooldowns exhausted
+    return err
+}
+defer lease.Release()
+
+profile, err := lease.Client.GetProfile(ctx, "satyanadella")
+if err != nil {
+    lease.ReportError(err) // parks budget/challenge/restricted accounts
+    return err
+}
+```
+
+Round-robin skips members that are in use, over daily budget, in cooldown, or
+soft-skipped after auth/challenge errors. `pool.Status()` / `pool.Available()`
+are for operator dashboards.
 
 ## MCP support
 

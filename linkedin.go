@@ -432,3 +432,28 @@ func (c *Client) RequestsRemaining() int {
 	}
 	return c.pacer.requestsRemaining()
 }
+
+// BudgetExhausted reports whether the human pacer's daily request budget is
+// configured and already consumed. False when pacing/budget are disabled.
+func (c *Client) BudgetExhausted() bool {
+	if c == nil || c.pacer == nil || c.pacer.policy.DailyBudget <= 0 {
+		return false
+	}
+	return c.pacer.requestsRemaining() <= 0
+}
+
+// WithProxyURL is WithProxy for a raw proxy URL string
+// (http://user:pass@host:port). Invalid URLs are ignored.
+func WithProxyURL(raw string) Option {
+	return func(c *Client) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return
+		}
+		c.proxyURL = u
+	}
+}
