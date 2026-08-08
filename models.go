@@ -195,6 +195,13 @@ type UserPostParams struct {
 	Count  int // default 5, max 20
 }
 
+// UserCommentParams controls pagination for GetUserComments.
+type UserCommentParams struct {
+	Member string // member/profile URN or vanity name
+	Start  int
+	Count  int // default 10, max 20
+}
+
 // --- Group types ---
 
 type Group struct {

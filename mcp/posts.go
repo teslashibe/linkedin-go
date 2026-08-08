@@ -24,6 +24,12 @@ type GetUserPostsInput struct {
 	Count  int    `json:"count,omitempty" jsonschema:"description=posts per page,minimum=1,maximum=20,default=5"`
 }
 
+type GetUserCommentsInput struct {
+	Member string `json:"member" jsonschema:"description=LinkedIn member/profile URN or vanity name,required"`
+	Start  int    `json:"start,omitempty" jsonschema:"description=pagination offset,minimum=0,default=0"`
+	Count  int    `json:"count,omitempty" jsonschema:"description=comments per page,minimum=1,maximum=20,default=10"`
+}
+
 func getPost(ctx context.Context, c *linkedin.Client, in GetPostInput) (any, error) {
 	return c.GetPost(ctx, in.PostURN)
 }
@@ -60,6 +66,22 @@ func getUserPosts(ctx context.Context, c *linkedin.Client, in GetUserPostsInput)
 	return mcptool.PageOf(items, next, limit), nil
 }
 
+func getUserComments(ctx context.Context, c *linkedin.Client, in GetUserCommentsInput) (any, error) {
+	items, err := c.GetUserComments(ctx, linkedin.UserCommentParams{Member: in.Member, Start: in.Start, Count: in.Count})
+	if err != nil {
+		return nil, err
+	}
+	limit := in.Count
+	if limit <= 0 {
+		limit = 10
+	}
+	next := ""
+	if len(items) == limit {
+		next = strconv.Itoa(in.Start + len(items))
+	}
+	return mcptool.PageOf(items, next, limit), nil
+}
+
 var postTools = []mcptool.Tool{
 	mcptool.Define[*linkedin.Client, GetPostInput](
 		"linkedin_get_post",
@@ -78,5 +100,11 @@ var postTools = []mcptool.Tool{
 		"Fetch recent public posts by LinkedIn member URN or vanity name.",
 		"GetUserPosts",
 		getUserPosts,
+	),
+	mcptool.Define[*linkedin.Client, GetUserCommentsInput](
+		"linkedin_get_user_comments",
+		"Fetch recent comments authored by a LinkedIn member across LinkedIn.",
+		"GetUserComments",
+		getUserComments,
 	),
 }

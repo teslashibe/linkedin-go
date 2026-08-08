@@ -40,6 +40,10 @@ profiles, err := client.SearchPeople(ctx, linkedin.SearchParams{
 // Full profile scrape
 profile, err := client.GetProfile(ctx, "satyanadella")
 fmt.Println(profile.FullName(), profile.Headline)
+
+// Recent posts + comments authored by the member
+posts, err := client.GetUserPosts(ctx, linkedin.UserPostParams{Member: "satyanadella", Count: 10})
+comments, err := client.GetUserComments(ctx, linkedin.UserCommentParams{Member: "satyanadella", Count: 10})
 ```
 
 ## Search filters

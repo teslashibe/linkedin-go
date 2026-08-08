@@ -97,6 +97,49 @@ func (c *Client) GetUserPosts(ctx context.Context, p UserPostParams) ([]Post, er
 	return parsePosts(body, "")
 }
 
+// GetUserComments returns recent comments authored by a member across LinkedIn.
+func (c *Client) GetUserComments(ctx context.Context, p UserCommentParams) ([]PostComment, error) {
+	member := strings.TrimSpace(p.Member)
+	if member == "" {
+		return nil, fmt.Errorf("%w: member URN or vanity name required", ErrInvalidParams)
+	}
+	if p.Start < 0 {
+		return nil, fmt.Errorf("%w: start must be at least 0", ErrInvalidParams)
+	}
+	count := p.Count
+	if count <= 0 {
+		count = 10
+	}
+	if count > 20 {
+		return nil, fmt.Errorf("%w: count must be at most 20", ErrInvalidParams)
+	}
+
+	hops := 1
+	if !strings.HasPrefix(member, "urn:li:") {
+		vanity := normalizeVanityName(member)
+		if vanity == "" {
+			return nil, fmt.Errorf("%w: member URN or vanity name required", ErrInvalidParams)
+		}
+		if _, ok := c.vanityURN.Load(strings.ToLower(vanity)); !ok {
+			hops = 2
+		}
+	}
+	if err := c.requireDeadlineBudget(ctx, hops); err != nil {
+		return nil, err
+	}
+
+	resolved, err := c.resolveMemberURN(ctx, member)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/identity/profileUpdatesV2?profileUrn=%s&q=memberComments&start=%d&count=%d", apiBase, url.QueryEscape(resolved), p.Start, count)
+	body, err := c.makeRequest(ctx, reqURL)
+	if err != nil {
+		return nil, err
+	}
+	return parseMemberComments(body, resolved)
+}
+
 // resolveMemberURN returns a member/profile URN, using a session vanity cache
 // when the caller passes a vanity name or profile URL.
 func (c *Client) resolveMemberURN(ctx context.Context, member string) (string, error) {
@@ -239,9 +282,15 @@ func parsePosts(body []byte, wantedURN string) ([]Post, error) {
 		}
 		seen[urn] = true
 		raw, _ := json.Marshal(obj)
+		text := firstTextDeep(obj, "commentary", "commentaryV2", "text", "description", "title")
+		if text == "" {
+			if commentary, ok := obj["commentary"].(map[string]any); ok {
+				text = annotatedText(commentary)
+			}
+		}
 		post := Post{
 			URN: urn, ActivityURN: activityURN,
-			Text:      firstTextDeep(obj, "commentary", "text", "comment", "description"),
+			Text:      text,
 			CreatedAt: firstInt64Deep(obj, "createdAt", "publishedAt", "timestamp", "lastModifiedAt"),
 			URL:       firstStringDeep(obj, "permalink", "url", "navigationUrl"), Raw: raw,
 		}
@@ -256,37 +305,162 @@ func parsePosts(body []byte, wantedURN string) ([]Post, error) {
 }
 
 func parseComments(body []byte, postURN string) ([]PostComment, error) {
+	comments, err := parseMemberComments(body, "")
+	if err != nil {
+		return nil, err
+	}
+	if postURN == "" {
+		return comments, nil
+	}
+	for i := range comments {
+		if comments[i].PostURN == "" {
+			comments[i].PostURN = postURN
+		}
+	}
+	return comments, nil
+}
+
+func parseMemberComments(body []byte, memberURN string) ([]PostComment, error) {
 	var root any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, fmt.Errorf("%w: comments response: %v", ErrParseFailed, err)
 	}
 	entities := collectObjects(root)
 	byURN := indexObjectsByURN(entities)
+	memberKey := memberIdentityKey(memberURN)
 	comments := make([]PostComment, 0)
 	seen := map[string]bool{}
 	for _, obj := range entities {
-		urn := firstString(obj, "entityUrn", "urn", "commentUrn")
 		typ := strings.ToLower(firstString(obj, "$type"))
-		if !strings.Contains(typ, "comment") && !strings.Contains(strings.ToLower(urn), "comment") {
+		urn := firstString(obj, "entityUrn", "urn", "commentUrn")
+		if strings.Contains(typ, "hidecomment") || strings.Contains(typ, "socialdetail") ||
+			strings.Contains(typ, "socialpermissions") || strings.Contains(typ, "activitycounts") {
+			continue
+		}
+		if !strings.HasSuffix(typ, ".comment") && !strings.Contains(typ, "feed.comment") && !strings.Contains(strings.ToLower(urn), "comment:(") {
 			continue
 		}
 		if urn == "" || seen[urn] {
 			continue
 		}
-		text := firstTextDeep(obj, "comment", "message", "text", "commentary")
+		text := commentText(obj)
 		if text == "" {
 			continue
 		}
+		author := parseAuthor(obj, byURN)
+		if author.URN == "" {
+			if commenter, ok := obj["commenter"].(map[string]any); ok {
+				author = parseAuthor(commenter, byURN)
+				if author.URN == "" {
+					author.URN = firstString(commenter, "*miniProfile", "miniProfile", "*followingInfo")
+				}
+			}
+		}
+		if memberKey != "" && !authorMatchesMember(author, obj, memberKey) {
+			continue
+		}
 		seen[urn] = true
+		postURN := firstStringDeep(obj, "objectUrn", "threadUrn", "parentUrn")
+		if postURN == "" {
+			postURN = postURNFromCommentPointers(obj)
+		}
 		comments = append(comments, PostComment{
 			URN: urn, PostURN: postURN,
-			ParentURN: firstStringDeep(obj, "parentCommentUrn", "parentUrn", "threadUrn"),
-			Text:      text, Author: parseAuthor(obj, byURN),
+			ParentURN: firstStringDeep(obj, "parentCommentUrn", "parentUrn"),
+			Text:      text, Author: author,
 			CreatedAt: firstInt64Deep(obj, "createdAt", "publishedAt", "timestamp"),
 			LikeCount: firstIntDeep(obj, "likeCount", "numLikes", "totalLikes"),
 		})
 	}
 	return comments, nil
+}
+
+func memberIdentityKey(memberURN string) string {
+	memberURN = strings.TrimSpace(memberURN)
+	if memberURN == "" {
+		return ""
+	}
+	if i := strings.LastIndex(memberURN, ":"); i >= 0 {
+		return strings.ToLower(memberURN[i+1:])
+	}
+	return strings.ToLower(memberURN)
+}
+
+func authorMatchesMember(author PostAuthor, obj map[string]any, memberKey string) bool {
+	candidates := []string{author.URN, author.PublicID}
+	if commenter, ok := obj["commenter"].(map[string]any); ok {
+		candidates = append(candidates,
+			firstString(commenter, "*miniProfile", "miniProfile", "*followingInfo", "entityUrn", "urn"),
+		)
+	}
+	for _, c := range candidates {
+		c = strings.ToLower(c)
+		if c == "" {
+			continue
+		}
+		if strings.Contains(c, strings.ToLower(memberKey)) {
+			return true
+		}
+	}
+	return false
+}
+
+func commentText(obj map[string]any) string {
+	if s := firstTextDeep(obj, "commentV2", "message", "commentary", "text"); s != "" {
+		return s
+	}
+	if annotated, ok := obj["comment"].(map[string]any); ok {
+		if s := annotatedText(annotated); s != "" {
+			return s
+		}
+	}
+	return firstTextDeep(obj, "comment")
+}
+
+func annotatedText(obj map[string]any) string {
+	if s := firstString(obj, "text", "value"); s != "" {
+		return s
+	}
+	values, ok := obj["values"].([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for _, item := range values {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if s := firstString(m, "value", "text"); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func postURNFromCommentPointers(obj map[string]any) string {
+	for _, key := range []string{"*socialDetail", "socialDetail", "*hideCommentAction", "entityUrn"} {
+		raw := firstString(obj, key)
+		if raw == "" {
+			continue
+		}
+		if i := strings.Index(raw, "ugcPost:"); i >= 0 {
+			id := raw[i+len("ugcPost:"):]
+			for j, r := range id {
+				if r < '0' || r > '9' {
+					id = id[:j]
+					break
+				}
+			}
+			if id != "" {
+				return "urn:li:ugcPost:" + id
+			}
+		}
+		if i := strings.Index(raw, "urn:li:activity:"); i >= 0 {
+			return embeddedActivityURN(raw[i:])
+		}
+	}
+	return ""
 }
 
 func collectObjects(v any) []map[string]any {
@@ -322,11 +496,20 @@ func indexObjectsByURN(objects []map[string]any) map[string]map[string]any {
 func looksLikePost(obj map[string]any, urn string) bool {
 	typ := strings.ToLower(firstString(obj, "$type"))
 	u := strings.ToLower(urn)
+	// profileUpdatesV2 embeds many side entities (miniCompany, socialDetail,
+	// updateActions, bare activity stubs). Only UpdateV2 cards are posts.
 	if strings.Contains(typ, "comment") || strings.Contains(u, "comment") {
 		return false
 	}
-	return strings.Contains(typ, "update") || strings.Contains(typ, "share") || strings.Contains(typ, "ugcpost") ||
-		strings.Contains(u, ":activity:") || strings.Contains(u, ":share:") || strings.Contains(u, ":ugcpost:")
+	if strings.Contains(u, "fs_minicompany") || strings.Contains(u, "fs_miniprofile") ||
+		strings.Contains(u, "fs_socialdetail") || strings.Contains(u, "fs_socialpermissions") ||
+		strings.Contains(u, "fs_socialactivitycounts") || strings.Contains(u, "fs_updatev2actions") {
+		return false
+	}
+	if strings.Contains(typ, "updatev2") || strings.Contains(u, "fs_updatev2:(") {
+		return true
+	}
+	return false
 }
 
 func samePostID(a, b string) bool {
@@ -446,6 +629,9 @@ func firstText(obj map[string]any, keys ...string) string {
 				}
 			case map[string]any:
 				if s := firstString(x, "text", "body", "value"); s != "" {
+					return s
+				}
+				if s := annotatedText(x); s != "" {
 					return s
 				}
 			}
