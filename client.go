@@ -1,7 +1,6 @@
 package linkedin
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -190,97 +189,11 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-// makePostRequest performs an authenticated Voyager API POST request with the
-// same retry semantics as makeRequest.
+// makePostRequest retains the legacy return shape and uses the same single-dispatch
+// write transport as receipt-bearing outreach. maxRetries applies only to reads.
 func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
-	if c.auth.LiAt == "" || c.auth.CSRF == "" {
-		return nil, ErrInvalidAuth
-	}
-	if err := c.checkCooldown(); err != nil {
-		return nil, err
-	}
-
-	release := c.acquireRequestSlot(ctx)
-	if release == nil {
-		return nil, mapCtxErr(ctx.Err())
-	}
-	defer release()
-
-	if err := c.warmUp(ctx); err != nil {
-		return nil, err
-	}
-
-	attempts := c.maxRetries
-	if attempts <= 0 {
-		attempts = 1
-	}
-
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			wait := c.backoff(i)
-			if lastErr != nil {
-				if ra, ok := lastErr.(*retryAfterError); ok && ra.wait > wait {
-					wait = ra.wait
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return nil, mapCtxErr(ctx.Err())
-			case <-time.After(wait):
-			}
-		}
-
-		body, err := c.doPostRequest(ctx, requestURL, payload)
-		if err == nil {
-			return body, nil
-		}
-		if isNonRecoverable(err) {
-			return nil, err
-		}
-		lastErr = err
-	}
-
-	return nil, lastErr
-}
-
-func (c *Client) doPostRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, error) {
-	if err := c.gateBeforeRequest(ctx); err != nil {
-		return nil, mapCtxErr(err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
-	}
-
-	headers := make(map[string]string, 16)
-	c.applyVoyagerHeaders(headers, requestURL, true)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
-	}
-	defer resp.Body.Close()
-
-	c.absorbSetCookies(resp)
-	c.updateRateLimit(resp.Header)
-
-	if err := c.classifyResponse(resp, requestURL); err != nil {
-		return nil, err
-	}
-
-	body, rerr := readResponseBody(resp)
-	if rerr != nil {
-		return nil, rerr
-	}
-	if err := detectRestrictionInBody(body); err != nil {
-		return nil, err
-	}
-	return body, nil
+	body, _, err := c.makeWriteRequest(ctx, requestURL, payload)
+	return body, err
 }
 
 // gateBeforeRequest applies humanized pacing (or the legacy minGap path),
@@ -465,6 +378,27 @@ func (c *Client) absorbSetCookies(resp *http.Response) {
 	cks := resp.Cookies()
 	for _, ck := range cks {
 		ck.Value = strings.ReplaceAll(ck.Value, `"`, "")
+		if ck.Name == "li_at" || ck.Name == "JSESSIONID" {
+			// Auth imports are deliberately flattened to one LinkedIn-origin
+			// session by seedJar. Keep a fresh host-only rotation from creating a
+			// second stale auth cookie with a different domain/path on the wire.
+			path := ck.Path
+			if path == "" && resp.Request != nil && resp.Request.URL != nil {
+				requestPath := resp.Request.URL.Path
+				if index := strings.LastIndex(requestPath, "/"); index > 0 {
+					path = requestPath[:index]
+				}
+			}
+			if path == "" {
+				path = "/"
+			}
+			for _, oldPath := range []string{path, "/"} {
+				for _, domain := range []string{"", ".linkedin.com", "www.linkedin.com"} {
+					c.jar.SetCookies(linkedinBaseURL, []*http.Cookie{{Name: ck.Name, Path: oldPath, Domain: domain, MaxAge: -1}})
+				}
+			}
+			ck.Domain, ck.Path, ck.Secure = ".linkedin.com", "/", true
+		}
 	}
 	c.jar.SetCookies(linkedinBaseURL, cks)
 }
