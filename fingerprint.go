@@ -3,6 +3,7 @@ package linkedin
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -28,6 +29,30 @@ type BrowserProfile struct {
 	DisplayWidth    int
 	DisplayHeight   int
 	DisplayDensity  int
+}
+
+var desktopChromeVersion = regexp.MustCompile(`Chrome/([0-9]+)\.`)
+
+// BrowserProfileFromUserAgent derives only desktop Chrome hints that the UA
+// establishes. Timezone, display and language remain unknown until supplied by
+// the host; a partial profile does not emit invented x-li-track metadata.
+func BrowserProfileFromUserAgent(ua string) (BrowserProfile, error) {
+	version := desktopChromeVersion.FindStringSubmatch(ua)
+	if len(version) != 2 || strings.ContainsAny(ua, "\r\n") || strings.Contains(ua, "Mobile") || strings.Contains(ua, "Android") || strings.Contains(ua, "Edg/") {
+		return BrowserProfile{}, ErrInvalidParams
+	}
+	platform := ""
+	switch {
+	case strings.Contains(ua, "Windows NT"):
+		platform = "Windows"
+	case strings.Contains(ua, "Macintosh"):
+		platform = "macOS"
+	case strings.Contains(ua, "Linux"):
+		platform = "Linux"
+	default:
+		return BrowserProfile{}, ErrInvalidParams
+	}
+	return BrowserProfile{UserAgent: ua, SecChUA: fmt.Sprintf(`"Chromium";v="%s"`, version[1]), SecChUAMobile: "?0", SecChUAPlatform: fmt.Sprintf("%q", platform)}, nil
 }
 
 // MacChromePT returns a believable Mac Chrome 136 profile pinned to Pacific Time
@@ -141,12 +166,16 @@ func (c *Client) applyVoyagerHeaders(headers map[string]string, reqURL string, p
 	bp := c.browser
 	headers["User-Agent"] = bp.UserAgent
 	headers["Accept"] = "application/vnd.linkedin.normalized+json+2.1"
-	headers["Accept-Language"] = bp.AcceptLanguage
+	if bp.AcceptLanguage != "" {
+		headers["Accept-Language"] = bp.AcceptLanguage
+	}
 	headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-	headers["csrf-token"] = c.auth.CSRF
+	headers["csrf-token"] = c.sessionCSRF()
 	headers["x-li-lang"] = "en_US"
 	headers["x-restli-protocol-version"] = "2.0.0"
-	headers["x-li-track"] = bp.xLiTrack()
+	if bp.TimezoneName != "" && bp.DisplayDensity > 0 && bp.DisplayWidth > 0 && bp.DisplayHeight > 0 {
+		headers["x-li-track"] = bp.xLiTrack()
+	}
 	headers["x-li-page-instance"] = pageInstance(reqURL)
 	headers["sec-ch-ua"] = bp.SecChUA
 	headers["sec-ch-ua-mobile"] = bp.SecChUAMobile

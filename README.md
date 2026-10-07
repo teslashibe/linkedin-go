@@ -46,6 +46,31 @@ posts, err := client.GetUserPosts(ctx, linkedin.UserPostParams{Member: "satyanad
 comments, err := client.GetUserComments(ctx, linkedin.UserCommentParams{Member: "satyanadella", Count: 10})
 ```
 
+## Host-owned outreach
+
+`GetMe` establishes the authenticated member's immutable `fsd_profile` identity.
+`ResolveMember` checks an exact profile URL and the sender's observed relationship;
+`ResolveCommentTarget` binds a post and optional parent comment to one thread.
+Approved writes use `SendMessageWithReceipt`, `CreateComment`, and
+`SendConnectionInvitation`. They require the expected sender identity and return
+provider creation identifiers. The new methods remain private to the host's
+application policy rather than adding raw provider MCP tools.
+
+Every POST gets one attempt, including existing write methods. Reads retain their
+configured retries. `ErrWriteUnknown` means dispatch occurred without a trustworthy
+acknowledgement; the host must preserve that outcome and must not replay it.
+The host owns approval, cadence, scheduling, tenant boundaries, session encryption,
+and reconnecting the same immutable account.
+
+Use `WithBrowserProfile` with `BrowserProfileFromUserAgent` for a captured desktop
+Chrome UA. The derived profile leaves timezone and display unknown; the client
+omits `x-li-track` until those values are supplied. After strict self verification,
+`VerifiedMemberURN` and `AuthSnapshot` let the host fence and encrypt legitimate
+cookie rotations.
+
+See [the contract and pinned protocol evidence](docs/outreach.md) for caps,
+receipt fidelity, unsupported actions, and outstanding live delivery gates.
+
 ## Search filters
 
 All filters available in the LinkedIn UI are supported:
