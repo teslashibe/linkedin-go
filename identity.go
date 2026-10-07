@@ -385,7 +385,10 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 		}
 		return nil
 	}
-	if noInvitation && firstString(data, "entityUrn") == wanted && (member.ConnectionDegree == 2 || member.ConnectionDegree == 3) {
+	// The exact relationship resource can prove no connection/invitation without
+	// supplying memberDistance. Distance remains independent DM evidence; an
+	// explicit DISTANCE_1/noConnection contradiction was rejected above.
+	if noInvitation && firstString(data, "entityUrn") == wanted {
 		member.InvitationState = "available"
 	}
 	return nil

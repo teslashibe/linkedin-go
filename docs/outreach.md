@@ -6,11 +6,11 @@ workspace authorization, persistence, operation leases, approval, scheduling,
 cadence, cancellation, and account reconnection. These methods introduce no new
 raw provider MCP tools.
 
-The implementation has offline fixture coverage. No live LinkedIn request,
-account login, DM, comment, or invitation was made to verify this release.
-Consumers should keep delivery independently gated until their authorized live
-tests prove each action. A successful account connection proves authentication,
-not any write endpoint.
+The implementation has offline fixture coverage. A consumer's bounded,
+authenticated reads of approved controlled targets informed the invitation
+relationship and exact-parent corrections below; they made no provider writes. Consumers should keep
+delivery independently gated until their authorized live tests prove each action.
+A successful account connection proves authentication, not any write endpoint.
 
 ## Identity and session
 
@@ -28,6 +28,14 @@ connection tuples also bind their two IDs to the recipient and verified sender.
 Call `GetMe` before resolving a tuple-based relationship. Legacy `networkinfo`
 is a safe read fallback after a missing modern endpoint and does not establish
 invitation availability.
+
+Invitation availability instead requires the exact modern relationship resource
+identity and explicit object-valued `noConnection` and `noInvitation` unions.
+That resource may omit or return an unrecognized `memberDistance`; this does not
+prove a first-degree relationship or permit a DM. An explicit `DISTANCE_1`
+inside `noConnection` is contradictory and still fails closed. This distinction
+comes from a bounded authenticated read of an approved controlled target, with
+zero provider writes; it does not prove invitation delivery or note entitlement.
 
 All write methods perform their own strict sender probe before destination
 verification. `ErrSenderIdentityMismatch` and `ErrRecipientIdentityMismatch`
@@ -84,11 +92,32 @@ association. It does not assume the activity ID equals the share/ugcPost ID.
 
 Parent identities may use legacy `comment` tuples or modern `fsd_comment` and
 `fsd_normComment` tuples. Modern tuples put the comment ID first; the canonical
-legacy representation puts the post first. The parent must be observed in the
-bounded existing comments read, currently at most 50 returned comments. A missing
-parent, unsupported provider shape, or deeper parent outside that read fails
-closed. Pagination or an exact-parent fetch would be a separate bounded extension.
-There is no fallback to a top-level comment.
+legacy representation puts the post first. After resolving the activity and
+backend post, the SDK makes one exact-parent `GET /feed/comments` with
+`q=singleComment`. Its `commentUrn` uses the same short activity/comment tuple as
+the existing nested writer. The parent is no longer limited to the first 50
+comments on a page.
+
+The normalized response must contain one `data.*elements` reference that binds
+exactly one included `com.linkedin.voyager.feed.Comment`. Its opaque service
+`entityUrn` is a reference identity; its own `urn` must identify the requested
+comment and its verified post/activity. Explicit comment aliases must agree.
+Null `threadUrn` and `parentCommentUrn` are absent ancestry metadata; non-null
+linkage must remain on that post. Direct `commentV2.text` must be present.
+Same-URN SocialDetail records, unrelated siblings, nested wrappers, unresolved or
+ambiguous references, provider errors, and conflicting identities cannot prove
+the parent. Missing or unsupported evidence fails closed before POST; no alternate
+read route or top-level write is substituted.
+
+This route comes from the current first-party `comments/utils/comment-requests`
+module's `findSingleCommentRecord` function in the
+[observed public first-party bundle](https://static.licdn.com/aero-v1/sc/h/3m3go3repw2j67lulkso1xzji).
+The decoded bundle SHA-256 is
+`bf2c2ad032b0d7ed8cf0343fae7f64fbe797861a94fb9a52a2a7e21d04e4ad77`.
+A bounded authenticated consumer read
+confirmed the normalized response shape and opaque-service/comment-URN distinction
+with zero provider writes. It proves exact-parent read compatibility, not nested
+delivery.
 
 Creation results must identify the explicitly created entity or a unique explicit
 reference into `included`. Unrelated included records, old parent comments,
@@ -155,6 +184,7 @@ capture body is stored here.
 | Strict authenticated mini-profile and old comment acknowledgement handling | [S'more profile.go, commit 10a3165, lines 17–106](https://github.com/teslashibe/smore/blob/10a3165c5297277ec58f267bac1641a55d292a1f/backend/vendor/github.com/teslashibe/linkedin-go/profile.go#L17-L106), [comment fixtures, lines 169–252](https://github.com/teslashibe/smore/blob/10a3165c5297277ec58f267bac1641a55d292a1f/backend/internal/mcp/platforms/linkedin_test.go#L169-L252) | Recovered selected behavior from tracked vendor code. Its v1.7.2 label did not match published upstream source; the permissive self fallback and retrying writer were removed |
 | Nested NormComments-43 payload and post-dispatch 500 behavior | [linkedin-relay W5 research, commit eacd3db, lines 261–290](https://github.com/gabros20/linkedin-relay/blob/eacd3db2ca281727f5fa7a7fb46dbc2bb1d9324b/docs/research/W5-sdui-writes.md#L261-L290) | Author's captured nested reply uses the short `activity:` parent tuple as `threadUrn`; missing decoration could create a reply and still return 500 |
 | Comment tuple order, top-level/nested write, direct created entity | [capture posts, commit 91fb1cf, lines 213–227](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/posts/index.ts#L213-L227), [lines 314–360](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/posts/index.ts#L314-L360) | Current author implementation supplies modern comment tuple conversion and NormComments request/result shape |
+| Exact-parent singleComment read | [LinkedIn first-party bundle](https://static.licdn.com/aero-v1/sc/h/3m3go3repw2j67lulkso1xzji), decoded SHA-256 `bf2c2ad032b0d7ed8cf0343fae7f64fbe797861a94fb9a52a2a7e21d04e4ad77`, module `comments/utils/comment-requests`, function `findSingleCommentRecord` | Public source supplies the exact GET route and parameters. A bounded authenticated read with zero writes supplies the normalized reference/comment shape; fixture identifiers and text are synthetic |
 | Relationship read union and invitation result | [capture connections, commit 91fb1cf, lines 379–450](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/connections/index.ts#L379-L450), [lines 503–531](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/connections/index.ts#L503-L531) | Current relationship endpoint and explicit no-invitation/pending union. Missing evidence stays unknown; note slicing and receipt-free success were not copied |
 | Connection tuple with recipient reference | [linkedin-toolkit endpoints, commit d6b4fcc, lines 190–200](https://github.com/vicnaum/linkedin-toolkit/blob/d6b4fcc8917e1f72461dc3932c6b4b5553ec2559/references/endpoints.md#L190-L200) | Author-documented normalized connection shape; both tuple members and recipient reference must agree |
 | Invitation with exact note | [linkedin-mcp endpoints, commit caa2737, lines 453–463](https://github.com/devag7/linkedin-mcp/blob/caa27376ea30bfb34e15f2a1a63a5423c3b40bee/src/browser/endpoints.ts#L453-L463) | `verifyQuotaAndCreateV2`, invitation decoration, `memberProfile`, and `customMessage`; no older endpoint fallback |
@@ -174,5 +204,5 @@ Before enabling delivery, a consumer must independently prove each intended
 ordinary DM, top-level/nested comment, and exact-note invitation on explicitly
 authorized accounts, including resulting provider identifiers and note/text
 association. Connection-only approval does not authorize those sends. Inbox
-reading, InMail, note entitlement discovery, arbitrary nested ancestry pagination,
+reading, InMail, note entitlement discovery, arbitrary comment pagination,
 and provider-side idempotency remain outside this release.

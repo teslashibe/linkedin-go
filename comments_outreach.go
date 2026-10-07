@@ -136,27 +136,20 @@ func (c *Client) ResolveCommentTarget(ctx context.Context, identifier, parent st
 	if post != target.PostURN && post != target.ActivityURN {
 		return nil, ErrInvalidParams
 	}
-	// Existing provider read path is bounded. Absence never authorizes a fallback
-	// top-level comment; it is a safe failure until a parent can be verified.
-	items, err := c.GetPostComments(ctx, PostCommentParams{PostURN: target.PostURN, Count: 50})
+	// The current singleComment resource returns an explicit reference to its
+	// comment entity. Use the same verified activity tuple as the nested writer;
+	// a page of other comments cannot establish this exact parent's identity.
+	parentID := strings.TrimSuffix(strings.Split(canonical, ",")[1], ")")
+	nativeParent := "urn:li:comment:(" + strings.TrimPrefix(target.ActivityURN, "urn:li:") + "," + parentID + ")"
+	body, err := c.makeRequest(ctx, apiBase+"/feed/comments?q=singleComment&commentUrn="+url.QueryEscape(nativeParent))
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		observed, err := CanonicalCommentURN(item.URN)
-		if err != nil {
-			continue
-		}
-		if sameComment(observed, canonical, target) {
-			itemPost, err := canonicalPostReference(item.PostURN)
-			if err != nil || (itemPost != target.PostURN && itemPost != target.ActivityURN) {
-				return nil, ErrInvalidParams
-			}
-			target.ParentCommentURN = canonical
-			return target, nil
-		}
+	if err := verifyExactParentComment(body, canonical, target); err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	target.ParentCommentURN = canonical
+	return target, nil
 }
 
 func sameComment(a, b string, target *CommentTarget) bool {
