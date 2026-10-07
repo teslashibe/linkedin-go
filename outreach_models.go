@@ -99,6 +99,9 @@ const (
 	writeUnknownCreationValue       = "creation_value"
 	writeUnknownMessageReceipt      = "message_receipt"
 	writeUnknownConversationReceipt = "conversation_receipt"
+	writeUnknownCommentReceipt      = "comment_receipt"
+	writeUnknownCommentHeader       = "comment_header"
+	writeUnknownInvitationReceipt   = "invitation_receipt"
 	writeUnknownIdentityMismatch    = "identity_mismatch"
 	writeUnknownRequestMismatch     = "request_mismatch"
 )
@@ -114,7 +117,8 @@ func WriteUnknownReason(err error) string {
 		switch outcome.unknownReason {
 		case writeUnknownTransport, writeUnknownResponseBody, writeUnknownResponseContent,
 			writeUnknownResponseStatus, writeUnknownCreationValue, writeUnknownMessageReceipt,
-			writeUnknownConversationReceipt, writeUnknownIdentityMismatch, writeUnknownRequestMismatch:
+			writeUnknownConversationReceipt, writeUnknownCommentReceipt, writeUnknownCommentHeader,
+			writeUnknownInvitationReceipt, writeUnknownIdentityMismatch, writeUnknownRequestMismatch:
 			return outcome.unknownReason
 		}
 	}
