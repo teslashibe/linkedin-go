@@ -85,6 +85,14 @@ func TestOutreachRelationshipEvidence(t *testing.T) {
 		{"connection has no recipient", prefix + `{"*connection":"urn:li:fsd_connection:CONNECTION"}},"included":[{"entityUrn":"urn:li:fsd_connection:CONNECTION"}]}`, 0, "unknown", false},
 		{"connection wrong recipient", prefix + `{"*connection":"urn:li:fsd_connection:CONNECTION"}},"included":[{"entityUrn":"urn:li:fsd_connection:CONNECTION","connectedMember":"urn:li:fsd_profile:OTHER"}]}`, 0, "unknown", true},
 		{"available", prefix + `{"noConnection":{"memberDistance":"DISTANCE_2","invitationUnion":{"noInvitation":{}}}}}}`, 2, "available", false},
+		{"available without distance", prefix + `{"noConnection":{"invitationUnion":{"noInvitation":{}}}}}}`, 0, "available", false},
+		{"available unknown distance", prefix + `{"noConnection":{"memberDistance":"DISTANCE_OUT_OF_NETWORK","invitationUnion":{"noInvitation":{}}}}}}`, 0, "available", false},
+		{"noConnection contradicts first degree", prefix + `{"noConnection":{"memberDistance":"DISTANCE_1","invitationUnion":{"noInvitation":{}}}}}}`, 0, "unknown", true},
+		{"noInvitation error", prefix + `{"noConnection":{"invitationUnion":{"noInvitation":{"code":"RESTRICTED"}}}}}}`, 0, "unknown", false},
+		{"invitation union error", prefix + `{"noConnection":{"invitationUnion":{"code":"RESTRICTED","noInvitation":{}}}}}}`, 0, "unknown", true},
+		{"noInvitation and invitation reference conflict", prefix + `{"noConnection":{"invitationUnion":{"noInvitation":{},"*invitation":"urn:li:fsd_invitation:INVITE"}}}}}`, 0, "unknown", true},
+		{"unbound noInvitation", `{"data":{"memberRelationshipUnion":{"noConnection":{"invitationUnion":{"noInvitation":{}}}}}}`, 0, "unknown", false},
+		{"wrong noInvitation identity", `{"data":{"entityUrn":"urn:li:fsd_memberRelationship:OTHER","memberRelationshipUnion":{"noConnection":{"invitationUnion":{"noInvitation":{}}}}}}`, 0, "unknown", true},
 		{"null noInvitation", prefix + `{"noConnection":{"memberDistance":"DISTANCE_2","invitationUnion":{"noInvitation":null}}}}}`, 2, "unknown", false},
 		{"false noInvitation", prefix + `{"noConnection":{"memberDistance":"DISTANCE_2","invitationUnion":{"noInvitation":false}}}}}`, 2, "unknown", false},
 		{"errored noConnection", prefix + `{"noConnection":{"code":"RESTRICTED","memberDistance":"DISTANCE_2","invitationUnion":{"noInvitation":{}}}}}}`, 0, "unknown", true},
@@ -105,6 +113,55 @@ func TestOutreachRelationshipEvidence(t *testing.T) {
 			}
 			if err != nil || member.ConnectionDegree != tc.degree || member.InvitationState != tc.state {
 				t.Fatalf("member=%+v err=%v", member, err)
+			}
+		})
+	}
+}
+
+// An authenticated read of the approved controlled target returned the exact
+// relationship identity and both object unions, but no recognized distance.
+// Synthetic IDs and text retain that structural contract without private data.
+func TestOutreachNoInvitationWithoutDistanceIsNotDMEvidence(t *testing.T) {
+	for _, action := range []string{"connect", "dm"} {
+		t.Run(action, func(t *testing.T) {
+			var writes atomic.Int32
+			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodPost {
+					writes.Add(1)
+					if action != "connect" {
+						t.Fatal("unconnected recipient received a DM dispatch")
+					}
+					var payload struct {
+						CustomMessage string `json:"customMessage"`
+						Invitee       struct {
+							Union struct {
+								Profile string `json:"memberProfile"`
+							} `json:"inviteeUnion"`
+						} `json:"invitee"`
+					}
+					if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+						t.Fatal(err)
+					}
+					if payload.CustomMessage != " exact note 😀\n " || payload.Invitee.Union.Profile != "urn:li:fsd_profile:RECIPIENT" {
+						t.Fatal("invitation destination or approved note changed")
+					}
+					return response(req, 201, `{"data":{"value":{"invitationUrn":"urn:li:fsd_invitation:NEW"}}}`), nil
+				}
+				if strings.Contains(req.URL.Path, "MemberRelationships/") {
+					return response(req, 200, `{"data":{"entityUrn":"urn:li:fsd_memberRelationship:RECIPIENT","memberRelationshipUnion":{"noConnection":{"invitationUnion":{"noInvitation":{}}}}}}`), nil
+				}
+				return fixtureRead(req, 2), nil
+			})
+			if action == "dm" {
+				_, err := c.SendMessageWithReceipt(context.Background(), DirectMessageParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Body: "approved"})
+				if !errors.Is(err, ErrRecipientNotMessageable) || writes.Load() != 0 {
+					t.Fatalf("writes=%d err=%v", writes.Load(), err)
+				}
+				return
+			}
+			receipt, err := c.SendConnectionInvitation(context.Background(), InvitationParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: " exact note 😀\n "})
+			if err != nil || receipt.InvitationURN != "urn:li:fsd_invitation:NEW" || writes.Load() != 1 {
+				t.Fatalf("receipt=%+v writes=%d err=%v", receipt, writes.Load(), err)
 			}
 		})
 	}
@@ -286,11 +343,14 @@ func fixtureRead(req *http.Request, degree int) *http.Response {
 		}
 		return response(req, 200, `{"data":{"entityUrn":"urn:li:fsd_memberRelationship:RECIPIENT","memberRelationshipUnion":{"noConnection":{"memberDistance":"DISTANCE_2","invitationUnion":{"noInvitation":{}}}}}}`)
 	}
+	if req.URL.Path == "/voyager/api/feed/comments" && req.URL.Query().Get("q") == "singleComment" {
+		if req.URL.Query().Get("commentUrn") != "urn:li:comment:(activity:123,456)" {
+			return response(req, 200, `{"data":{"*elements":[]},"included":[]}`)
+		}
+		return response(req, 200, exactParentFixture())
+	}
 	if strings.Contains(req.URL.Path, "/feed/") {
 		return response(req, 200, `{"elements":[{"entityUrn":"urn:li:activity:123","activityUrn":"urn:li:activity:123","metadata":{"shareUrn":"urn:li:ugcPost:111"}}]}`)
-	}
-	if strings.HasSuffix(req.URL.Path, "/comments") {
-		return response(req, 200, `{"elements":[{"$type":"com.linkedin.voyager.feed.Comment","entityUrn":"urn:li:comment:(activity:123,456)","commentV2":{"text":"parent"},"objectUrn":"urn:li:ugcPost:111"}]}`)
 	}
 	return response(req, 404, `{}`)
 }
