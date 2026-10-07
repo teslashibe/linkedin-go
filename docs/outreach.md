@@ -98,6 +98,19 @@ must agree within their own family, including viewer ownership when encoded.
 When the creation object includes text, sender, recipient, or parent evidence,
 it must agree with the approved request.
 
+Comment creation may acknowledge through headers when its body is empty, `{}`,
+or exactly `{"data":{}}`. Unsupported, malformed, errored, or unresolved body
+evidence cannot be bypassed by a header. Receipt headers accept a full canonical
+comment URN; `Location` also accepts the tracked legacy HTTPS `www.linkedin.com`
+route `/voyager/api/socialActions/<postURN>/comments/<numeric-comment-ID>`.
+That route must contain the resolved post/activity identity. Query metadata is
+parsed separately and does not become part of the comment URN. All supplied
+recognized receipts must identify the same created comment, distinct from a
+nested parent. This restores the
+[tracked legacy Location fixture](https://github.com/teslashibe/smore/blob/10a3165c5297277ec58f267bac1641a55d292a1f/backend/internal/mcp/platforms/linkedin_test.go#L193-L195).
+It does not establish which parser branch caused previous live uncertainty;
+the original acknowledgement would be needed to confirm that cause.
+
 Current primary comment-creation evidence exposes only the created entity ID.
 The bounded member author/actor/commenter variants are informed by the documented
 [comment read schema, lines 1465–1563](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/posts/index.ts#L1465-L1563).
@@ -122,6 +135,13 @@ unknown and never automatically repeat it. Explicit authorization, rate-limit,
 and recognized rejection responses retain their typed error and safe HTTP status/
 Retry-After metadata through `WriteError`. Safe reads may still repeat under their
 configured retry policy. This is not provider-side exactly-once delivery.
+
+`WriteUnknownReason` exposes bounded diagnostics for comment and invitation
+acknowledgements: `creation_value`, `comment_receipt`, `comment_header`,
+`invitation_receipt`, `identity_mismatch`, and `request_mismatch`. These codes
+identify failed checks without logging provider bodies, IDs, message text, or
+credentials. They do not authorize another write or turn an existing unknown
+row into a success.
 
 ## Pinned protocol evidence
 

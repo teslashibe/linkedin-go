@@ -316,30 +316,31 @@ func commentReceipt(body []byte, restID, location string, target *CommentTarget,
 	}
 	if len(body) != 0 {
 		value, err := createdValue(body)
-		if err != nil {
-			return "", err
+		sparse := sparseCommentAcknowledgment(body)
+		if err != nil && !sparse {
+			return "", unknownReceiptReason(writeUnknownCreationValue)
 		}
 		if observed, exists := value["commentary"]; exists && valueText(observed) != text {
-			return "", unknownReceipt()
+			return "", unknownReceiptReason(writeUnknownRequestMismatch)
 		}
 		if observed, exists := value["text"]; exists && valueText(observed) != text {
-			return "", unknownReceipt()
+			return "", unknownReceiptReason(writeUnknownRequestMismatch)
 		}
 		if !commentAuthorMatches(value, sender) {
-			return "", unknownReceipt()
+			return "", unknownReceiptReason(writeUnknownIdentityMismatch)
 		}
 		if observed, exists := value["parentCommentUrn"]; exists {
 			parent, ok := observed.(string)
 			if !ok {
-				return "", unknownReceipt()
+				return "", unknownReceiptReason(writeUnknownRequestMismatch)
 			}
 			if target.ParentCommentURN == "" && parent != "" {
-				return "", unknownReceipt()
+				return "", unknownReceiptReason(writeUnknownRequestMismatch)
 			}
 			if target.ParentCommentURN != "" {
 				canonical, err := CanonicalCommentURN(parent)
 				if err != nil || !sameComment(canonical, target.ParentCommentURN, target) {
-					return "", unknownReceipt()
+					return "", unknownReceiptReason(writeUnknownRequestMismatch)
 				}
 			}
 		}
@@ -347,36 +348,82 @@ func commentReceipt(body []byte, restID, location string, target *CommentTarget,
 			if observed, exists := value[key]; exists {
 				candidate, ok := observed.(string)
 				if !ok || !accept(candidate) {
-					return "", unknownReceipt()
+					return "", unknownReceiptReason(writeUnknownCommentReceipt)
 				}
 			}
 		}
+		if !sparse && found == "" {
+			return "", unknownReceiptReason(writeUnknownCommentReceipt)
+		}
 	}
-	for _, header := range []string{restID, location} {
-		if header == "" {
-			continue
+	if restID != "" {
+		candidate, err := commentURNHeader(restID)
+		if err != nil || !accept(candidate) {
+			return "", unknownReceiptReason(writeUnknownCommentHeader)
 		}
-		for range 2 {
-			decoded, err := url.PathUnescape(header)
-			if err != nil {
-				return "", unknownReceipt()
-			}
-			if decoded == header {
-				break
-			}
-			header = decoded
-		}
-		if index := strings.Index(header, "urn:li:"); index >= 0 {
-			header = header[index:]
-		}
-		if !accept(header) {
-			return "", unknownReceipt()
+	}
+	if location != "" {
+		candidate, err := commentLocation(location, target)
+		if err != nil || !accept(candidate) {
+			return "", unknownReceiptReason(writeUnknownCommentHeader)
 		}
 	}
 	if found == "" {
-		return "", unknownReceipt()
+		return "", unknownReceiptReason(writeUnknownCommentReceipt)
 	}
 	return found, nil
+}
+
+// Only these empty success envelopes may defer entirely to creation headers.
+// Unsupported wrappers, included-only records, errors and explicit references
+// remain failures rather than being ignored when a header is also present.
+func sparseCommentAcknowledgment(body []byte) bool {
+	var root map[string]any
+	if json.Unmarshal(body, &root) != nil || root == nil {
+		return false
+	}
+	if len(root) == 0 {
+		return true
+	}
+	data, ok := root["data"].(map[string]any)
+	return len(root) == 1 && ok && len(data) == 0
+}
+
+func commentURNHeader(raw string) (string, error) {
+	for range 2 {
+		decoded, err := url.PathUnescape(raw)
+		if err != nil {
+			return "", ErrInvalidParams
+		}
+		if decoded == raw {
+			break
+		}
+		raw = decoded
+	}
+	return CanonicalCommentURN(raw)
+}
+
+// Location is either a full comment identity or the exact resource route from
+// the tracked S'more fixture. Query is URI metadata, never part of the URN.
+func commentLocation(raw string, target *CommentTarget) (string, error) {
+	if candidate, err := commentURNHeader(raw); err == nil {
+		return candidate, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() != "www.linkedin.com" ||
+		u.User != nil || u.Port() != "" || u.Fragment != "" {
+		return "", ErrInvalidParams
+	}
+	parts := strings.Split(u.Path, "/")
+	if len(parts) != 7 || parts[0] != "" || parts[1] != "voyager" || parts[2] != "api" ||
+		parts[3] != "socialActions" || parts[5] != "comments" || !numericID(parts[6]) {
+		return "", ErrInvalidParams
+	}
+	post, err := canonicalPostReference(parts[4])
+	if err != nil || (post != target.PostURN && post != target.ActivityURN) {
+		return "", ErrInvalidParams
+	}
+	return CanonicalCommentURN("urn:li:comment:(" + post + "," + parts[6] + ")")
 }
 
 func commentAuthorMatches(value map[string]any, sender string) bool {

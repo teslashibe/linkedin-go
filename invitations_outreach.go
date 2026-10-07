@@ -48,26 +48,26 @@ func (c *Client) SendConnectionInvitation(ctx context.Context, p InvitationParam
 	}
 	value, err := createdValue(body)
 	if err != nil {
-		return nil, err
+		return nil, unknownReceiptReason(writeUnknownCreationValue)
 	}
 	urn := ""
 	for _, key := range []string{"invitationUrn", "*invitation", "entityUrn"} {
 		if observed, exists := value[key]; exists {
 			candidate, ok := observed.(string)
 			if !ok || !receiptURN(candidate, "urn:li:fsd_invitation:") || (urn != "" && urn != candidate) {
-				return nil, unknownReceipt()
+				return nil, unknownReceiptReason(writeUnknownInvitationReceipt)
 			}
 			urn = candidate
 		}
 	}
 	if urn == "" {
-		return nil, unknownReceipt()
+		return nil, unknownReceiptReason(writeUnknownInvitationReceipt)
 	}
 	if !invitationRecipientMatches(value, recipient) {
-		return nil, unknownReceipt()
+		return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
 	}
 	if observed, exists := value["customMessage"]; exists && observed != p.Note {
-		return nil, unknownReceipt()
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
 	}
 	return &InvitationReceipt{InvitationURN: urn, RecipientURN: recipient}, nil
 }
