@@ -98,6 +98,12 @@ must agree within their own family, including viewer ownership when encoded.
 When the creation object includes text, sender, recipient, or parent evidence,
 it must agree with the approved request.
 
+Current primary comment-creation evidence exposes only the created entity ID.
+The bounded member author/actor/commenter variants are informed by the documented
+[comment read schema, lines 1465–1563](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/posts/index.ts#L1465-L1563).
+An author field with unresolved or unsupported identity becomes unknown; the SDK
+does not recursively interpret renderers or claim a captured creation author echo.
+
 `PostComment.Text`, `PostURN`, and `ParentURN`, and `InvitationReceipt.RecipientURN`
 retain the checked request association. They are not a claim that the provider
 echoed those fields. The created identifiers are provider acknowledgement

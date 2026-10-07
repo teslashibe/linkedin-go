@@ -325,14 +325,8 @@ func commentReceipt(body []byte, restID, location string, target *CommentTarget,
 		if observed, exists := value["text"]; exists && valueText(observed) != text {
 			return "", unknownReceipt()
 		}
-		for _, key := range []string{"actorUrn", "authorUrn", "*author", "*actor"} {
-			if observed, exists := value[key]; exists {
-				raw, ok := observed.(string)
-				canonical, err := CanonicalMemberURN(raw)
-				if !ok || err != nil || canonical != sender {
-					return "", unknownReceipt()
-				}
-			}
+		if !commentAuthorMatches(value, sender) {
+			return "", unknownReceipt()
 		}
 		if observed, exists := value["parentCommentUrn"]; exists {
 			parent, ok := observed.(string)
@@ -383,4 +377,66 @@ func commentReceipt(body []byte, restID, location string, target *CommentTarget,
 		return "", unknownReceipt()
 	}
 	return found, nil
+}
+
+func commentAuthorMatches(value map[string]any, sender string) bool {
+	for _, key := range []string{"actorUrn", "authorUrn", "*author", "*actor", "*commenter"} {
+		if observed, exists := value[key]; exists {
+			raw, ok := observed.(string)
+			canonical, err := CanonicalMemberURN(raw)
+			if !ok || err != nil || canonical != sender {
+				return false
+			}
+		}
+	}
+	for _, key := range []string{"author", "actor", "commenter"} {
+		observed, exists := value[key]
+		if !exists {
+			continue
+		}
+		if raw, ok := observed.(string); ok {
+			canonical, err := CanonicalMemberURN(raw)
+			if err != nil || canonical != sender {
+				return false
+			}
+			continue
+		}
+		obj, ok := observed.(map[string]any)
+		if !ok || hasErrorEnvelope(obj) {
+			return false
+		}
+		nodes := []map[string]any{obj}
+		for _, childKey := range []string{"actor", "actorUnion"} {
+			if child, exists := obj[childKey]; exists {
+				nested, ok := child.(map[string]any)
+				if !ok || hasErrorEnvelope(nested) {
+					return false
+				}
+				nodes = append(nodes, nested)
+			}
+		}
+		proven := false
+		for _, node := range nodes {
+			if _, company := node["companyUrn"]; company {
+				return false
+			}
+			for _, memberKey := range []string{"entityUrn", "urn", "profileUrn", "*profileUrn", "*miniProfile", "commenterProfileId"} {
+				if observed, exists := node[memberKey]; exists {
+					raw, ok := observed.(string)
+					if memberKey == "commenterProfileId" {
+						raw = "urn:li:fsd_profile:" + raw
+					}
+					canonical, err := CanonicalMemberURN(raw)
+					if !ok || err != nil || canonical != sender {
+						return false
+					}
+					proven = true
+				}
+			}
+		}
+		if !proven {
+			return false
+		}
+	}
+	return true
 }

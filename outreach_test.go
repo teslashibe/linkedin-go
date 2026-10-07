@@ -222,6 +222,10 @@ func TestOutreachCommentAcknowledgmentAssociation(t *testing.T) {
 		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","authorUrn":"urn:li:fsd_profile:OTHER"}}`,
 		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","parentCommentUrn":""}}`,
 		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","commentUrn":"urn:li:fsd_comment:(789,urn:li:activity:999)"}}`,
+		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","author":{"profileUrn":"urn:li:fsd_profile:OTHER"}}}`,
+		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","*commenter":"urn:li:fsd_profile:OTHER"}}`,
+		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","commenter":{"displayName":"unresolved"}}}`,
+		`{"data":{"entityUrn":"urn:li:fsd_comment:(789,urn:li:activity:123)","commenter":{"actorUnion":{"companyUrn":"urn:li:fsd_company:123"}}}}`,
 	} {
 		if _, err := commentReceipt([]byte(body), "", "", target, " exact ", "urn:li:fsd_profile:SELF"); !errors.Is(err, ErrWriteUnknown) {
 			t.Fatalf("body=%s err=%v", body, err)
