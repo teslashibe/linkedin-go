@@ -50,16 +50,23 @@ func (c *Client) SendMessageWithReceipt(ctx context.Context, p DirectMessagePara
 	}
 	value, err := createdValue(body)
 	if err != nil {
-		return nil, err
+		return nil, unknownReceiptReason(writeUnknownCreationValue)
 	}
 	message, messageOK := selectMessagingReceipt(value, []string{"backendUrn", "entityUrn"}, me.URN, "urn:li:msg_message:", "urn:li:messagingMessage:")
 	conversation, conversationOK := selectMessagingReceipt(value, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, me.URN, "urn:li:msg_conversation:", "urn:li:messagingThread:")
-	if !messageOK || !conversationOK {
-		return nil, unknownReceipt()
+	if !messageOK {
+		return nil, unknownReceiptReason(writeUnknownMessageReceipt)
+	}
+	if !conversationOK {
+		return nil, unknownReceiptReason(writeUnknownConversationReceipt)
 	}
 	for key, expected := range map[string]string{"originToken": origin, "mailboxUrn": me.URN, "senderUrn": me.URN, "recipientUrn": recipient} {
 		if observed, exists := value[key]; exists && observed != expected {
-			return nil, unknownReceipt()
+			reason := writeUnknownIdentityMismatch
+			if key == "originToken" {
+				reason = writeUnknownRequestMismatch
+			}
+			return nil, unknownReceiptReason(reason)
 		}
 	}
 	for _, key := range []string{"*sender", "*actor"} {
@@ -68,18 +75,18 @@ func (c *Client) SendMessageWithReceipt(ctx context.Context, p DirectMessagePara
 			raw = strings.TrimPrefix(raw, "urn:li:msg_messagingParticipant:")
 			member, err := CanonicalMemberURN(raw)
 			if !ok || err != nil || member != me.URN {
-				return nil, unknownReceipt()
+				return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
 			}
 		}
 	}
 	if observed, exists := value["hostRecipientUrns"]; exists {
 		recipients, ok := observed.([]any)
 		if !ok || len(recipients) != 1 || recipients[0] != recipient {
-			return nil, unknownReceipt()
+			return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
 		}
 	}
 	if observed, exists := value["body"]; exists && valueText(observed) != p.Body {
-		return nil, unknownReceipt()
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
 	}
 	return &MessageReceipt{MessageURN: message, ConversationURN: conversation}, nil
 }

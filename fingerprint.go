@@ -169,7 +169,7 @@ func (c *Client) applyVoyagerHeaders(headers map[string]string, reqURL string, p
 	if bp.AcceptLanguage != "" {
 		headers["Accept-Language"] = bp.AcceptLanguage
 	}
-	headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
+	headers["Accept-Encoding"] = "gzip"
 	headers["csrf-token"] = c.sessionCSRF()
 	headers["x-li-lang"] = "en_US"
 	headers["x-restli-protocol-version"] = "2.0.0"

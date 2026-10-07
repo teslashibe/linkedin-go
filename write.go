@@ -72,18 +72,18 @@ func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payloa
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, nil, &WriteError{Cause: ErrWriteUnknown}
+		return nil, nil, &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownTransport}
 	}
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
 	c.updateRateLimit(resp.Header)
 	body, err := readResponseBody(resp)
 	if err != nil {
-		return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown}
+		return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, unknownReason: writeUnknownResponseBody}
 	}
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") || detectRestrictionInBody(body) != nil {
-			return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown}
+			return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, unknownReason: writeUnknownResponseContent}
 		}
 		return body, resp.Header.Clone(), nil
 	}
@@ -99,7 +99,7 @@ func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payloa
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusConflict, http.StatusUnprocessableEntity:
 		cause = writeRejection(body)
 	}
-	return nil, nil, &WriteError{StatusCode: resp.StatusCode, RetryAfter: wait, Cause: cause}
+	return nil, nil, &WriteError{StatusCode: resp.StatusCode, RetryAfter: wait, Cause: cause, unknownReason: writeUnknownResponseStatus}
 }
 
 func writeRejection(body []byte) error {
@@ -141,6 +141,10 @@ func writeRejection(body []byte) error {
 }
 
 func unknownReceipt() error { return &WriteError{Cause: ErrWriteUnknown} }
+
+func unknownReceiptReason(reason string) error {
+	return &WriteError{Cause: ErrWriteUnknown, unknownReason: reason}
+}
 
 // IsWriteUnknown reports a dispatched write whose success cannot be established.
 func IsWriteUnknown(err error) bool { return errors.Is(err, ErrWriteUnknown) }
