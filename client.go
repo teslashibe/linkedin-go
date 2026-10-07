@@ -137,7 +137,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 	req.Header.Set("User-Agent", c.browser.UserAgent)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", c.browser.AcceptLanguage)
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Referer", referrerFor(requestURL))
 	req.Header.Set("sec-ch-ua", c.browser.SecChUA)
 	req.Header.Set("sec-ch-ua-mobile", c.browser.SecChUAMobile)
@@ -173,14 +173,25 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 }
 
 func readResponseBody(resp *http.Response) ([]byte, error) {
+	return readResponseBodyLimit(resp, 0)
+}
+
+func readResponseBodyLimit(resp *http.Response, limit int64) ([]byte, error) {
 	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" {
+	switch strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))) {
+	case "", "identity":
+	case "gzip":
 		gr, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("%w: gzip: %v", ErrRequestFailed, err)
 		}
 		defer gr.Close()
 		reader = gr
+	default:
+		return nil, fmt.Errorf("%w: unsupported response encoding", ErrRequestFailed)
+	}
+	if limit > 0 {
+		reader = io.LimitReader(reader, limit)
 	}
 	body, err := io.ReadAll(reader)
 	if err != nil {
@@ -431,7 +442,7 @@ func (c *Client) warmUp(ctx context.Context) error {
 	req.Header.Set("User-Agent", bp.UserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
 	req.Header.Set("Accept-Language", bp.AcceptLanguage)
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("sec-ch-ua", bp.SecChUA)
 	req.Header.Set("sec-ch-ua-mobile", bp.SecChUAMobile)
 	req.Header.Set("sec-ch-ua-platform", bp.SecChUAPlatform)
@@ -448,7 +459,10 @@ func (c *Client) warmUp(ctx context.Context) error {
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, err := readResponseBodyLimit(resp, 64*1024)
+	if err != nil {
+		return err
+	}
 
 	// If the warm-up itself trips a restriction page, fail fast — the account
 	// is already burned and there's no point hitting Voyager.

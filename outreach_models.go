@@ -82,10 +82,41 @@ var (
 // WriteError contains safe provider outcome metadata, never a response body.
 // Once dispatch starts, an unproven failure unwraps to ErrWriteUnknown.
 type WriteError struct {
-	StatusCode int
-	RetryAfter time.Duration
-	Cause      error
+	StatusCode    int
+	RetryAfter    time.Duration
+	Cause         error
+	unknownReason string
 }
 
 func (e *WriteError) Error() string { return fmt.Sprintf("%v (HTTP %d)", e.Cause, e.StatusCode) }
 func (e *WriteError) Unwrap() error { return e.Cause }
+
+const (
+	writeUnknownTransport           = "transport"
+	writeUnknownResponseBody        = "response_body"
+	writeUnknownResponseContent     = "response_content"
+	writeUnknownResponseStatus      = "response_status"
+	writeUnknownCreationValue       = "creation_value"
+	writeUnknownMessageReceipt      = "message_receipt"
+	writeUnknownConversationReceipt = "conversation_receipt"
+	writeUnknownIdentityMismatch    = "identity_mismatch"
+	writeUnknownRequestMismatch     = "request_mismatch"
+)
+
+// WriteUnknownReason returns a bounded diagnostic code for an uncertain write,
+// or an empty string for a definite outcome. It never returns provider content.
+func WriteUnknownReason(err error) string {
+	if !errors.Is(err, ErrWriteUnknown) {
+		return ""
+	}
+	var outcome *WriteError
+	if errors.As(err, &outcome) {
+		switch outcome.unknownReason {
+		case writeUnknownTransport, writeUnknownResponseBody, writeUnknownResponseContent,
+			writeUnknownResponseStatus, writeUnknownCreationValue, writeUnknownMessageReceipt,
+			writeUnknownConversationReceipt, writeUnknownIdentityMismatch, writeUnknownRequestMismatch:
+			return outcome.unknownReason
+		}
+	}
+	return "unclassified"
+}
