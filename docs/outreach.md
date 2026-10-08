@@ -140,6 +140,25 @@ nested parent. This restores the
 It does not establish which parser branch caused previous live uncertainty;
 the original acknowledgement would be needed to confirm that cause.
 
+At the creation-receipt boundary, one `urn:li:fsd_normComment:` service prefix may
+wrap an already supported strict comment URN. The first-party bundle's
+`comments/components/dash/consistency-wrapper` constructs that identity from
+`comment.dashEntityUrn` (decoded byte offset 4,425,723). This is a receipt alias;
+`CanonicalCommentURN` and public target grammar remain unchanged. Repeated service
+prefixes, unrelated IDs, and conflicting post/comment/request evidence still
+fail closed.
+
+The same bundle's creation-success handler reads the store-normalized
+`singleComment.elements[0]` (byte offset 4,333,942). Its exact wire collection or
+reference shape has not been captured, so explicit `singleComment` or
+`*singleComment` evidence on the root, immediate data, their immediate value maps,
+or selected creation entity remains unknown rather than being interpreted or ignored. Unrelated included
+records supply no creation evidence and are not inspected for these fields.
+The prefix correction repairs a source-proven compatibility gap consistent with
+a live `comment_receipt` failure class. The original raw acknowledgement was not
+retained, so the exact past subbranch and this correction's live coverage remain
+unconfirmed.
+
 Current primary comment-creation evidence exposes only the created entity ID.
 The bounded member author/actor/commenter variants are informed by the documented
 [comment read schema, lines 1465–1563](https://github.com/crouton-labs/capture/blob/91fb1cf3bc206ad2493321550c51f8310a583160/vault/libs/linkedin/posts/index.ts#L1465-L1563).
@@ -171,6 +190,12 @@ acknowledgements: `creation_value`, `comment_receipt`, `comment_header`,
 identify failed checks without logging provider bodies, IDs, message text, or
 credentials. They do not authorize another write or turn an existing unknown
 row into a success.
+
+`WriteUnknownDetail` refines `comment_receipt` with `id_type`, `id_invalid`,
+`post_mismatch`, `existing_parent`, `alias_mismatch`, `id_missing`, or
+`detail_unsupported`. An unrecognized comment-receipt detail returns
+`unclassified`; definite outcomes and other reason classes return an empty string.
+These fixed enums carry no native IDs, response text, or credentials.
 
 ## Pinned protocol evidence
 

@@ -287,25 +287,57 @@ func (c *Client) CreateComment(ctx context.Context, p CreateCommentParams) (*Pos
 	return &PostComment{URN: urn, PostURN: target.PostURN, ParentURN: target.ParentCommentURN, Text: p.Text}, nil
 }
 
+// NormComment's service identity prefixes the underlying dash comment URN in
+// first-party display code. Only one such prefix is accepted at the receipt
+// boundary; public target parsing and arbitrary service IDs remain unchanged.
+func commentCreationURN(raw string) (string, error) {
+	if inner, ok := strings.CutPrefix(raw, "urn:li:fsd_normComment:"); ok && strings.HasPrefix(inner, "urn:li:") {
+		return CanonicalCommentURN(inner)
+	}
+	return CanonicalCommentURN(raw)
+}
+
+func unknownCommentReceipt(detail string) error {
+	return &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownCommentReceipt, unknownDetail: detail}
+}
+
+func hasUnsupportedCommentDetail(body []byte, selected map[string]any) bool {
+	var root map[string]any
+	if json.Unmarshal(body, &root) != nil {
+		return false // The creation-envelope check handles malformed JSON.
+	}
+	data, _ := root["data"].(map[string]any)
+	rootValue, _ := root["value"].(map[string]any)
+	dataValue, _ := data["value"].(map[string]any)
+	for _, boundary := range []map[string]any{root, data, rootValue, dataValue, selected} {
+		for _, key := range []string{"singleComment", "*singleComment"} {
+			if _, exists := boundary[key]; exists {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func commentReceipt(body []byte, restID, location string, target *CommentTarget, text, sender string) (string, error) {
 	found := ""
-	accept := func(candidate string) bool {
-		canonical, err := CanonicalCommentURN(candidate)
+	accept := func(candidate string) string {
+		canonical, err := commentCreationURN(candidate)
 		if err != nil {
-			return false
+			return commentReceiptIDInvalid
 		}
 		post, _ := CommentPostURN(canonical)
 		if post != target.PostURN && post != target.ActivityURN {
-			return false
+			return commentReceiptPostMismatch
 		}
 		if target.ParentCommentURN != "" && sameComment(canonical, target.ParentCommentURN, target) {
-			return false
+			return commentReceiptExistingParent
 		}
 		if found != "" && !sameComment(found, canonical, target) {
-			return false
+			return commentReceiptAliasMismatch
 		}
 		found = canonical
-		return true
+		return ""
 	}
 	if len(body) != 0 {
 		value, err := createdValue(body)
@@ -337,32 +369,41 @@ func commentReceipt(body []byte, restID, location string, target *CommentTarget,
 				}
 			}
 		}
+		// First-party JS consumes a store-normalized singleComment collection,
+		// but its wire reference/collection shape has not been captured. Do not
+		// ignore explicit child evidence or invent a parser for that envelope.
+		if hasUnsupportedCommentDetail(body, value) {
+			return "", unknownCommentReceipt(commentReceiptDetailUnsupported)
+		}
 		for _, key := range []string{"entityUrn", "commentUrn", "urn"} {
 			if observed, exists := value[key]; exists {
 				candidate, ok := observed.(string)
-				if !ok || !accept(candidate) {
-					return "", unknownReceiptReason(writeUnknownCommentReceipt)
+				if !ok {
+					return "", unknownCommentReceipt(commentReceiptIDType)
+				}
+				if detail := accept(candidate); detail != "" {
+					return "", unknownCommentReceipt(detail)
 				}
 			}
 		}
 		if !sparse && found == "" {
-			return "", unknownReceiptReason(writeUnknownCommentReceipt)
+			return "", unknownCommentReceipt(commentReceiptIDMissing)
 		}
 	}
 	if restID != "" {
 		candidate, err := commentURNHeader(restID)
-		if err != nil || !accept(candidate) {
+		if err != nil || accept(candidate) != "" {
 			return "", unknownReceiptReason(writeUnknownCommentHeader)
 		}
 	}
 	if location != "" {
 		candidate, err := commentLocation(location, target)
-		if err != nil || !accept(candidate) {
+		if err != nil || accept(candidate) != "" {
 			return "", unknownReceiptReason(writeUnknownCommentHeader)
 		}
 	}
 	if found == "" {
-		return "", unknownReceiptReason(writeUnknownCommentReceipt)
+		return "", unknownCommentReceipt(commentReceiptIDMissing)
 	}
 	return found, nil
 }

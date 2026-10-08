@@ -86,6 +86,7 @@ type WriteError struct {
 	RetryAfter    time.Duration
 	Cause         error
 	unknownReason string
+	unknownDetail string
 }
 
 func (e *WriteError) Error() string { return fmt.Sprintf("%v (HTTP %d)", e.Cause, e.StatusCode) }
@@ -104,6 +105,13 @@ const (
 	writeUnknownInvitationReceipt   = "invitation_receipt"
 	writeUnknownIdentityMismatch    = "identity_mismatch"
 	writeUnknownRequestMismatch     = "request_mismatch"
+	commentReceiptIDType            = "id_type"
+	commentReceiptIDInvalid         = "id_invalid"
+	commentReceiptPostMismatch      = "post_mismatch"
+	commentReceiptExistingParent    = "existing_parent"
+	commentReceiptAliasMismatch     = "alias_mismatch"
+	commentReceiptIDMissing         = "id_missing"
+	commentReceiptDetailUnsupported = "detail_unsupported"
 )
 
 // WriteUnknownReason returns a bounded diagnostic code for an uncertain write,
@@ -120,6 +128,24 @@ func WriteUnknownReason(err error) string {
 			writeUnknownConversationReceipt, writeUnknownCommentReceipt, writeUnknownCommentHeader,
 			writeUnknownInvitationReceipt, writeUnknownIdentityMismatch, writeUnknownRequestMismatch:
 			return outcome.unknownReason
+		}
+	}
+	return "unclassified"
+}
+
+// WriteUnknownDetail refines the comment_receipt reason with a fixed enum. It
+// never exposes provider content and does not change the uncertain outcome.
+func WriteUnknownDetail(err error) string {
+	if WriteUnknownReason(err) != writeUnknownCommentReceipt {
+		return ""
+	}
+	var outcome *WriteError
+	if errors.As(err, &outcome) {
+		switch outcome.unknownDetail {
+		case commentReceiptIDType, commentReceiptIDInvalid, commentReceiptPostMismatch,
+			commentReceiptExistingParent, commentReceiptAliasMismatch, commentReceiptIDMissing,
+			commentReceiptDetailUnsupported:
+			return outcome.unknownDetail
 		}
 	}
 	return "unclassified"
