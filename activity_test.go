@@ -46,7 +46,7 @@ func TestActivityMessagesCursorsAndClassification(t *testing.T) {
 		if (e != nil) != tc.fail {
 			t.Fatalf("cursor=%s page=%+v err=%v", tc.cursor, p, e)
 		}
-		if e == nil && (p.Complete != tc.complete || p.Messages[0].Kind != "system") {
+		if e == nil && (p.Complete != tc.complete || p.Messages[0].Kind != "unknown") {
 			t.Fatalf("page=%+v", p)
 		}
 	}

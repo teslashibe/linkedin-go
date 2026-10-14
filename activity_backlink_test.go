@@ -21,6 +21,11 @@ func TestActivityMessageConversationBacklink(t *testing.T) {
 		t.Fatal("sender actor was misclassified as a system event")
 	}
 	source := string(body)
+	differentActor := strings.Replace(source, `"*actor": "urn:li:msg_messagingParticipant:fixture2"`, `"*actor": "urn:li:msg_messagingParticipant:fixture3"`, 1)
+	uncertain, err := activityFixtureClient(t, differentActor).GetActivityConversations(context.Background(), "urn:li:fsd_profile:SELF")
+	if err != nil || uncertain.Conversations[0].Messages[0].Kind != "unknown" {
+		t.Fatal("unrelated actor was treated as a known system event", err)
+	}
 	for _, broken := range []string{
 		strings.Replace(source, `"*conversation": "urn:li:msg_conversation:fixture1"`, `"*conversation": "urn:li:msg_conversation:missing"`, 1),
 		strings.Replace(source, `"*conversation":`, `"conversation":{"entityUrn":"urn:li:msg_conversation:other"},"*conversation":`, 1),

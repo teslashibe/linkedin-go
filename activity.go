@@ -366,8 +366,10 @@ func (raw rawActivityMessage) parse(conversation string) (ActivityMessage, error
 	}
 	// Normal messages include an actor equal to their sender. An unrelated or
 	// unresolved actor still cannot establish a human reply.
-	if actorPresent && !actorIsSender || generated {
+	if generated {
 		m.Kind = "system"
+	} else if actorPresent && !actorIsSender {
+		m.Kind = "unknown"
 	} else if err == nil && !unknown && ((raw.Body != nil && strings.TrimSpace(raw.Body.Text) != "") || m.HasAttachment) {
 		m.Kind = "human"
 	}
