@@ -294,7 +294,7 @@ func (raw rawActivityMessage) parse(conversation string) (ActivityMessage, error
 	if !validActivityURN(raw.URN, "msg_message") || raw.DeliveredAt <= 0 {
 		return ActivityMessage{}, ErrParseFailed
 	}
-	m := ActivityMessage{URN: raw.URN, ConversationURN: conversation, Body: "", SentAt: raw.DeliveredAt, Kind: "unknown", HasAttachment: len(raw.RenderContent) > 0}
+	m := ActivityMessage{URN: raw.URN, ConversationURN: conversation, Body: "", SentAt: raw.DeliveredAt, Kind: "unknown"}
 	sender, err := CanonicalMemberURN(raw.Sender.URN)
 	if err == nil {
 		m.SenderURN = sender
@@ -302,12 +302,36 @@ func (raw rawActivityMessage) parse(conversation string) (ActivityMessage, error
 	if raw.Body != nil {
 		m.Body = raw.Body.Text
 	}
-	// An actor denotes generated activity, not a message from the displayed sender.
-	if len(raw.Actor) > 0 && string(raw.Actor) != "null" {
+
+	// Known generated cards are never human replies, even when they carry text.
+	// Unrecognized render variants stay unknown until their semantics are reviewed.
+	generated, unknown := false, false
+	for _, content := range raw.RenderContent {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(content, &fields) != nil {
+			return ActivityMessage{}, ErrParseFailed
+		}
+		for key, value := range fields {
+			if string(value) == "null" || key == "$type" || key == "$recipeTypes" {
+				continue
+			}
+			switch key {
+			case "awayMessage", "callMessageContent", "messageAdRenderContent", "conversationAdsMessageContent", "sponsoredMessageOption", "videoMeeting":
+				generated = true
+			case "audio", "externalMedia", "file", "vectorImage", "video":
+				m.HasAttachment = true
+			case "forwardedMessageContent", "repliedMessageContent":
+			default:
+				unknown = true
+			}
+		}
+	}
+	if (len(raw.Actor) > 0 && string(raw.Actor) != "null") || generated {
 		m.Kind = "system"
-	} else if err == nil && (raw.Body != nil || m.HasAttachment) {
+	} else if err == nil && !unknown && ((raw.Body != nil && strings.TrimSpace(raw.Body.Text) != "") || m.HasAttachment) {
 		m.Kind = "human"
 	}
+
 	return m, nil
 }
 

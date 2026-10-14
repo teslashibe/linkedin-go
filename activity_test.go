@@ -2,6 +2,7 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -145,5 +146,30 @@ func TestRequestGateRefusalPreservesHostCause(t *testing.T) {
 				t.Fatal("private host error leaked")
 			}
 		})
+	}
+}
+
+func TestActivityGeneratedAndUnrecognizedCardsAreNotReplies(t *testing.T) {
+	for _, tc := range []struct {
+		content, body, want string
+		attachment          bool
+	}{
+		{`{"awayMessage":{"text":"automatic reply"}}`, "Thanks", "system", false},
+		{`{"messageAdRenderContent":{}}`, "Sponsored", "system", false},
+		{`{"callMessageContent":{}}`, "Missed call", "system", false},
+		{`{"newProviderCard":{}}`, "Unknown card", "unknown", false},
+		{`{"file":{}}`, "", "human", true},
+		{`{"vectorImage":{}}`, "", "human", true},
+		{`{}`, "", "unknown", false},
+	} {
+		var raw rawActivityMessage
+		body := `{"entityUrn":"urn:li:msg_message:m","deliveredAt":1700000000000,"sender":{"hostIdentityUrn":"urn:li:fsd_profile:OTHER"},"body":{"text":"` + tc.body + `"},"renderContent":[` + tc.content + `]}`
+		if err := json.Unmarshal([]byte(body), &raw); err != nil {
+			t.Fatal(err)
+		}
+		msg, err := raw.parse("urn:li:msg_conversation:t")
+		if err != nil || msg.Kind != tc.want || msg.HasAttachment != tc.attachment {
+			t.Fatalf("card=%s message=%+v err=%v", tc.content, msg, err)
+		}
 	}
 }
