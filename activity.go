@@ -470,6 +470,9 @@ func (c *Client) FindActivityConversation(ctx context.Context, expectedSender, r
 }
 
 func activityError(obj map[string]any) bool {
+	if partial, present := obj["incompleteRetriableData"]; present && partial != nil && partial != false {
+		return true
+	}
 	for _, key := range []string{"error", "errors"} {
 		v, ok := obj[key]
 		if !ok || v == nil {

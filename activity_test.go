@@ -30,7 +30,7 @@ func TestActivityConversationSnapshot(t *testing.T) {
 	}
 }
 func TestActivityPagesFailClosed(t *testing.T) {
-	for _, body := range []string{`{}`, `<html>login</html>`, `{"errors":[{"message":"denied"}],"data":{}}`, `{"data":{"messengerConversationsBySyncToken":{"elements":null}}}`, strings.Replace(conversationFixture, "urn:li:msg_message:event", "invalid", 1)} {
+	for _, body := range []string{`{}`, `<html>login</html>`, `{"errors":[{"message":"denied"}],"data":{}}`, `{"data":{"messengerConversationsBySyncToken":{"elements":null}}}`, strings.Replace(conversationFixture, "urn:li:msg_message:event", "invalid", 1), strings.Replace(conversationFixture, `"groupChat":false`, `"groupChat":false,"incompleteRetriableData":true`, 1)} {
 		if _, e := activityFixtureClient(t, body).GetActivityConversations(context.Background(), "urn:li:fsd_profile:SELF"); !errors.Is(e, ErrParseFailed) {
 			t.Fatalf("accepted malformed response, err=%v", e)
 		}
