@@ -570,6 +570,49 @@ func TestOutreachReadFallbackAndFingerprintFailClosed(t *testing.T) {
 	}
 }
 
+func TestOutreachProfileEmptyErrorsListIsNotARejection(t *testing.T) {
+	for _, field := range []string{`[]`, `[{}]`, `[null]`, `{}`, `""`, `false`} {
+		t.Run(field, func(t *testing.T) {
+			var relationships atomic.Int32
+			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				if strings.Contains(req.URL.Path, "MemberRelationships/") {
+					relationships.Add(1)
+					return fixtureRead(req, 2), nil
+				}
+				return response(req, 200, `{"errors":`+field+`,"data":{"errors":`+field+`},"included":[{"$type":"com.linkedin.voyager.dash.identity.profile.Profile","entityUrn":"urn:li:fsd_profile:RECIPIENT","publicIdentifier":"recipient","errors":`+field+`}]}`), nil
+			})
+			member, err := c.ResolveMember(context.Background(), "recipient")
+			if field == `[]` {
+				if err != nil || member.URN != "urn:li:fsd_profile:RECIPIENT" || member.InvitationState != "available" || relationships.Load() != 1 {
+					t.Fatalf("empty error list blocked valid identity: member=%+v err=%v", member, err)
+				}
+			} else if !errors.Is(err, ErrParseFailed) || relationships.Load() != 0 {
+				t.Fatalf("error envelope reached relationship read: err=%v reads=%d", err, relationships.Load())
+			}
+		})
+	}
+}
+
+func TestOutreachEmptyErrorsStillRequiresExactIdentityAndReceipt(t *testing.T) {
+	for _, body := range []string{
+		`{"errors":[],"miniProfile":{"publicIdentifier":"sender"}}`,
+		`{"errors":[{}],"miniProfile":{"entityUrn":"urn:li:fs_miniProfile:SELF"}}`,
+	} {
+		if _, err := parseAuthenticatedProfile([]byte(body)); err == nil {
+			t.Fatal("missing identity or provider error was accepted")
+		}
+	}
+	if _, err := parseAuthenticatedProfile([]byte(`{"errors":[],"miniProfile":{"entityUrn":"urn:li:fs_miniProfile:SELF"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if hasIdentityErrorEnvelope(map[string]any{"errors": []any{}}) || !hasIdentityErrorEnvelope(map[string]any{"error": []any{}}) {
+		t.Fatal("only the plural empty GraphQL errors list is valid")
+	}
+	if _, err := createdValue([]byte(`{"errors":[],"data":{}}`)); err == nil {
+		t.Fatal("empty errors manufactured a receipt")
+	}
+}
+
 func TestOutreachPreflightNeverDispatchesWrongSenderOrRecipient(t *testing.T) {
 	for _, tc := range []struct {
 		sender, recipient string

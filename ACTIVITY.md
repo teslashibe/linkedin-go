@@ -46,3 +46,10 @@ authentication. Reusing each export in a later process received HTTP 401, while
 the burner browser inbox remained usable. The disposable test harness failed to
 retain refreshed cookie state between processes and has been corrected. Live
 parser validation remains outstanding. No SDK provider write was performed.
+
+Identity and relationship reads allow an explicit empty GraphQL `errors` list.
+Non-empty lists and malformed error fields still reject the response. This
+read-only handling does not relax write-receipt or exact-parent checks. The
+regression suite reproduces the empty-list failure with synthetic profiles;
+confirmation against the profile response reported by the companion application's
+Keywork diagnosis remains outstanding.

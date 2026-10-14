@@ -77,15 +77,15 @@ func parseAuthenticatedProfile(body []byte) (*Profile, error) {
 		return nil, ErrIdentityUnavailable
 	}
 	var envelope map[string]any
-	if json.Unmarshal(body, &envelope) != nil || hasErrorEnvelope(envelope) {
+	if json.Unmarshal(body, &envelope) != nil || hasIdentityErrorEnvelope(envelope) {
 		return nil, ErrIdentityUnavailable
 	}
 	data, _ := envelope["data"].(map[string]any)
-	if hasErrorEnvelope(data) {
+	if hasIdentityErrorEnvelope(data) {
 		return nil, ErrIdentityUnavailable
 	}
 	for _, wrapper := range []map[string]any{envelope, data} {
-		if selected, ok := wrapper["miniProfile"].(map[string]any); ok && hasErrorEnvelope(selected) {
+		if selected, ok := wrapper["miniProfile"].(map[string]any); ok && hasIdentityErrorEnvelope(selected) {
 			return nil, ErrIdentityUnavailable
 		}
 	}
@@ -111,7 +111,7 @@ func parseAuthenticatedProfile(body []byte) (*Profile, error) {
 		entries, _ := envelope["included"].([]any)
 		for _, item := range entries {
 			selected, _ := item.(map[string]any)
-			if firstString(selected, "entityUrn") == ref && hasErrorEnvelope(selected) {
+			if firstString(selected, "entityUrn") == ref && hasIdentityErrorEnvelope(selected) {
 				return nil, ErrIdentityUnavailable
 			}
 		}
@@ -179,11 +179,11 @@ func (c *Client) ResolveMember(ctx context.Context, identifier string) (*Member,
 		return nil, err
 	}
 	var profileEnvelope map[string]any
-	if json.Unmarshal(profileBody, &profileEnvelope) != nil || hasErrorEnvelope(profileEnvelope) {
+	if json.Unmarshal(profileBody, &profileEnvelope) != nil || hasIdentityErrorEnvelope(profileEnvelope) {
 		return nil, ErrParseFailed
 	}
 	profileData, _ := profileEnvelope["data"].(map[string]any)
-	if hasErrorEnvelope(profileData) {
+	if hasIdentityErrorEnvelope(profileData) {
 		return nil, ErrParseFailed
 	}
 	var response profileAPIResponse
@@ -205,7 +205,7 @@ func (c *Client) ResolveMember(ctx context.Context, identifier string) (*Member,
 	entries, _ := profileEnvelope["included"].([]any)
 	for _, item := range entries {
 		selected, _ := item.(map[string]any)
-		if strings.EqualFold(firstString(selected, "publicIdentifier"), slug) && hasErrorEnvelope(selected) {
+		if strings.EqualFold(firstString(selected, "publicIdentifier"), slug) && hasIdentityErrorEnvelope(selected) {
 			return nil, ErrParseFailed
 		}
 	}
@@ -234,11 +234,11 @@ func (c *Client) ResolveMember(ctx context.Context, identifier string) (*Member,
 		return nil, err
 	}
 	var envelope map[string]any
-	if json.Unmarshal(body, &envelope) != nil || hasErrorEnvelope(envelope) {
+	if json.Unmarshal(body, &envelope) != nil || hasIdentityErrorEnvelope(envelope) {
 		return nil, ErrParseFailed
 	}
 	data, _ := envelope["data"].(map[string]any)
-	if hasErrorEnvelope(data) {
+	if hasIdentityErrorEnvelope(data) {
 		return nil, ErrParseFailed
 	}
 	var networkResponse struct {
@@ -279,11 +279,11 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 	if json.Unmarshal(body, &root) != nil {
 		return ErrParseFailed
 	}
-	if hasErrorEnvelope(root) {
+	if hasIdentityErrorEnvelope(root) {
 		return ErrParseFailed
 	}
 	data, _ := root["data"].(map[string]any)
-	if data == nil || hasErrorEnvelope(data) {
+	if data == nil || hasIdentityErrorEnvelope(data) {
 		return nil
 	}
 	if observed := firstString(data, "entityUrn"); observed != "" && observed != wanted {
@@ -293,7 +293,7 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 	if union == nil {
 		return nil
 	}
-	if hasErrorEnvelope(union) {
+	if hasIdentityErrorEnvelope(union) {
 		return ErrParseFailed
 	}
 	connection := firstString(union, "*connection")
@@ -326,7 +326,7 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 			if firstString(obj, "entityUrn") != connection {
 				continue
 			}
-			if hasErrorEnvelope(obj) {
+			if hasIdentityErrorEnvelope(obj) {
 				return ErrParseFailed
 			}
 			observed, err := connectedMemberURN(obj)
@@ -348,7 +348,7 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 	if !hasNoConnection {
 		return nil
 	}
-	if hasErrorEnvelope(noConnection) {
+	if hasIdentityErrorEnvelope(noConnection) {
 		return ErrParseFailed
 	}
 	switch firstString(noConnection, "memberDistance") {
@@ -360,14 +360,14 @@ func parseRelationship(body []byte, wanted string, member *Member, viewer string
 		member.ConnectionDegree = 3
 	}
 	invitation, _ := noConnection["invitationUnion"].(map[string]any)
-	if hasErrorEnvelope(invitation) {
+	if hasIdentityErrorEnvelope(invitation) {
 		return ErrParseFailed
 	}
 	ref := firstString(invitation, "*invitation")
 	noInvitationValue, noInvitation := invitation["noInvitation"]
 	if noInvitation {
 		proof, ok := noInvitationValue.(map[string]any)
-		noInvitation = ok && !hasErrorEnvelope(proof)
+		noInvitation = ok && !hasIdentityErrorEnvelope(proof)
 	}
 	if ref != "" {
 		if noInvitation || !receiptURN(ref, "urn:li:fsd_invitation:") {
@@ -415,7 +415,7 @@ func connectedMemberURN(obj map[string]any) (string, error) {
 			continue
 		}
 		raw, _ := value.(string)
-		if nested, ok := value.(map[string]any); ok && !hasErrorEnvelope(nested) {
+		if nested, ok := value.(map[string]any); ok && !hasIdentityErrorEnvelope(nested) {
 			raw = firstString(nested, "entityUrn", "profileUrn")
 		}
 		member, err := CanonicalMemberURN(raw)
@@ -463,4 +463,19 @@ func (c *Client) GetMemberRelationship(ctx context.Context, memberURN string) (*
 		return nil, err
 	}
 	return member, nil
+}
+
+// Identity reads may contain an empty GraphQL errors list. Ignore only that
+// explicit no-error value; keep receipt and comment validation unchanged.
+func hasIdentityErrorEnvelope(obj map[string]any) bool {
+	if list, ok := obj["errors"].([]any); ok && len(list) == 0 {
+		clean := make(map[string]any, len(obj))
+		for k, v := range obj {
+			if k != "errors" {
+				clean[k] = v
+			}
+		}
+		return hasErrorEnvelope(clean)
+	}
+	return hasErrorEnvelope(obj)
 }
