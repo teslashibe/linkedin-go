@@ -441,3 +441,26 @@ func uniqueIncludedReference(root map[string]any, ref string) bool {
 	}
 	return count == 1
 }
+
+// GetMemberRelationship reads one already resolved member without fetching their
+// profile. Unknown or missing evidence never implies acceptance. Hosts should
+// schedule a bounded rotating subset when a bulk connection feed is unavailable.
+func (c *Client) GetMemberRelationship(ctx context.Context, memberURN string) (*Member, error) {
+	urn, err := CanonicalMemberURN(memberURN)
+	if err != nil {
+		return nil, ErrInvalidParams
+	}
+	if c.VerifiedMemberURN() == "" {
+		return nil, ErrIdentityUnavailable
+	}
+	member := &Member{URN: urn, InvitationState: "unknown"}
+	relationshipID := "urn:li:fsd_memberRelationship:" + strings.TrimPrefix(urn, "urn:li:fsd_profile:")
+	body, err := c.makeRequest(ctx, apiBase+"/voyagerRelationshipsDashMemberRelationships/"+url.PathEscape(relationshipID))
+	if err != nil {
+		return nil, err
+	}
+	if err := parseRelationship(body, relationshipID, member, c.VerifiedMemberURN()); err != nil {
+		return nil, err
+	}
+	return member, nil
+}

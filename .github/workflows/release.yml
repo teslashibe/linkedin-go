@@ -20,6 +20,9 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Offline race tests
+        run: env -u LI_AT -u CSRF_TOKEN -u JSESSIONID -u LINKEDIN_EMAIL -u LINKEDIN_PASSWORD go test -race -count=1 ./... -skip '^TestIntegration_'
+
       - name: Vet & build
         run: go vet ./... && go build ./...
 
