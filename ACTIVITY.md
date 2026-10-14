@@ -36,8 +36,14 @@ should expose its consented, tenant-scoped stored activity through its own tools
 ## Preview validation status
 
 Offline fixture and race tests cover identity checks, normalized responses,
-cursor handling and per-attempt request gating. A limited user-authorized burner
-check authenticated successfully, then encountered an unsupported inbox response.
-A later identity check returned unauthorized; live testing stopped. The updated
-inbox parser still needs a successful live read before production enablement.
-No provider write was performed for this change.
+cursor handling, system/unknown message classification and per-attempt request
+gating. A host refusal remains typed and proves that HTTP dispatch did not occur;
+read retries stop at that refusal and an unsafe write is not marked ambiguous.
+
+A limited user-authorized burner check authenticated, then encountered an
+unsupported inbox response. The same supplied export later received HTTP 401
+through the SDK, including with the original default transport restored. The
+burner remains signed in and its browser inbox loads successfully. The SDK
+session/transport difference and a successful live inbox read remain release
+blockers; requesting a browser reconnect is not an established fix. No provider
+write was performed for this change.
