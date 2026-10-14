@@ -40,10 +40,9 @@ cursor handling, system/unknown message classification and per-attempt request
 gating. A host refusal remains typed and proves that HTTP dispatch did not occur;
 read retries stop at that refusal and an unsafe write is not marked ambiguous.
 
-A limited user-authorized burner check authenticated, then encountered an
-unsupported inbox response. The same supplied export later received HTTP 401
-through the SDK, including with the original default transport restored. The
-burner remains signed in and its browser inbox loads successfully. The SDK
-session/transport difference and a successful live inbox read remain release
-blockers; requesting a browser reconnect is not an established fix. No provider
-write was performed for this change.
+Limited user-authorized burner checks authenticated and received HTTP 200 inbox
+responses, but parsing failed. A second cookie export repeated that successful
+authentication. Reusing each export in a later process received HTTP 401, while
+the burner browser inbox remained usable. The disposable test harness failed to
+retain refreshed cookie state between processes and has been corrected. Live
+parser validation remains outstanding. No SDK provider write was performed.

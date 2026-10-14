@@ -173,3 +173,11 @@ func TestActivityGeneratedAndUnrecognizedCardsAreNotReplies(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityNormalizedNullReference(t *testing.T) {
+	body := strings.Replace(conversationFixture, `"renderContent":[]`, `"renderContent":[],"*actor":null`, 1)
+	page, err := activityFixtureClient(t, body).GetActivityConversations(context.Background(), "urn:li:fsd_profile:SELF")
+	if err != nil || page.Conversations[0].Messages[0].Kind != "human" {
+		t.Fatalf("nullable reference rejected: %v", err)
+	}
+}

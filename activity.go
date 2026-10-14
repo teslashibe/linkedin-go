@@ -217,6 +217,8 @@ func activityNode(body []byte, key string) (json.RawMessage, error) {
 						return nil, ErrParseFailed
 					}
 					switch ref := v.(type) {
+					case nil:
+						v = nil
 					case string:
 						resolved, ok := refs[ref]
 						if !ok {
