@@ -81,7 +81,7 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		return nil, requestTransportError(err)
 	}
 
 	headers := make(map[string]string, 16)
@@ -92,7 +92,7 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		return nil, requestTransportError(err)
 	}
 	defer resp.Body.Close()
 
@@ -132,7 +132,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		return nil, requestTransportError(err)
 	}
 	req.Header.Set("User-Agent", c.browser.UserAgent)
 	req.Header.Set("Accept", "application/json")
@@ -148,7 +148,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		return nil, requestTransportError(err)
 	}
 	defer resp.Body.Close()
 
@@ -510,7 +510,8 @@ func (e *nonRetryableError) Unwrap() error { return e.err }
 
 func isNonRecoverable(err error) bool {
 	var nre *nonRetryableError
-	return errors.As(err, &nre) ||
+	var denied *RequestGateError
+	return errors.As(err, &nre) || errors.As(err, &denied) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrAccountRestricted) ||
 		errors.Is(err, ErrChallengeRequired) ||
@@ -541,6 +542,10 @@ func mapCtxErr(err error) error {
 // wrapWarmUpTransportErr maps warm-up /feed/ deadline and EOF transport failures
 // to ErrTimeout (same retryable budget class as deadline preflight).
 func wrapWarmUpTransportErr(err error) error {
+	var denied *RequestGateError
+	if errors.As(err, &denied) {
+		return denied
+	}
 	if err == nil {
 		return nil
 	}

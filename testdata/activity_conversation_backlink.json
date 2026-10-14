@@ -1,0 +1,62 @@
+{
+  "data": {
+    "data": {
+      "messengerConversationsBySyncToken": {
+        "*elements": [
+          "urn:li:msg_conversation:fixture1"
+        ],
+        "metadata": {
+          "newSyncToken": "fixture"
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.messenger.Conversation",
+      "*conversationParticipants": [
+        "urn:li:msg_messagingParticipant:fixture2",
+        "urn:li:msg_messagingParticipant:fixture3"
+      ],
+      "entityUrn": "urn:li:msg_conversation:fixture1",
+      "groupChat": false,
+      "lastActivityAt": 1700000000000,
+      "messages": {
+        "$recipeTypes": [
+          "com.linkedin.ef42d389e03c9132206f3ec6461901d5"
+        ],
+        "$type": "com.linkedin.restli.common.CollectionResponse",
+        "*elements": [
+          "urn:li:msg_message:fixture4"
+        ]
+      }
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "*actor": "urn:li:msg_messagingParticipant:fixture2",
+      "*conversation": "urn:li:msg_conversation:fixture1",
+      "*sender": "urn:li:msg_messagingParticipant:fixture2",
+      "body": {
+        "$recipeTypes": [
+          "com.linkedin.266fa4c953556b402d53ebb36ba7e7a0"
+        ],
+        "$type": "com.linkedin.pemberly.text.AttributedText",
+        "attributes": [],
+        "text": "fixture-value"
+      },
+      "deliveredAt": 1700000000000,
+      "entityUrn": "urn:li:msg_message:fixture4",
+      "renderContent": []
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:fixture2",
+      "hostIdentityUrn": "urn:li:fsd_profile:fixture5"
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:fixture3",
+      "hostIdentityUrn": "urn:li:fsd_profile:fixture6"
+    }
+  ]
+}

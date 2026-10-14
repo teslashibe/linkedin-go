@@ -52,19 +52,21 @@ const (
 
 // Client is a LinkedIn Voyager API client.
 type Client struct {
-	auth           Auth
-	httpClient     *http.Client
-	jar            *cookiejar.Jar
-	browser        BrowserProfile
-	role           Role
-	proxyURL       *url.URL
-	cooldownUntil  time.Time // operator-imposed cool-off; ErrInCooldown until this passes
-	searchQueryID  string
-	profileQueryID string
-	maxRetries     int
-	retryBase      time.Duration
-	minGap         time.Duration
-	pacer          *pacer
+	auth            Auth
+	httpClient      *http.Client
+	jar             *cookiejar.Jar
+	browser         BrowserProfile
+	role            Role
+	proxyURL        *url.URL
+	cooldownUntil   time.Time // operator-imposed cool-off; ErrInCooldown until this passes
+	searchQueryID   string
+	profileQueryID  string
+	maxRetries      int
+	retryBase       time.Duration
+	minGap          time.Duration
+	pacer           *pacer
+	requestGate     RequestGate
+	activityQueries ActivityQueries
 
 	warmedUp       atomic.Bool
 	verifiedMember atomic.Value // string; proof from the last strict GetMe
@@ -136,6 +138,11 @@ func New(auth Auth, opts ...Option) *Client {
 		o(c)
 	}
 
+	if c.requestGate != nil {
+		copyClient := *c.httpClient
+		c.httpClient = &copyClient
+	}
+
 	if c.userAgent != "" {
 		c.browser.UserAgent = c.userAgent
 	}
@@ -161,6 +168,9 @@ func New(auth Auth, opts ...Option) *Client {
 		c.applyProxy()
 	}
 	c.ensureJSESSIONQuoteTransport()
+	if c.requestGate != nil {
+		c.httpClient.Transport = &gatedTransport{base: c.httpClient.Transport, gate: c.requestGate}
+	}
 
 	return c
 }
