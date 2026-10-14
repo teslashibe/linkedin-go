@@ -72,6 +72,10 @@ func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payloa
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
+		var denied *RequestGateError
+		if errors.As(err, &denied) {
+			return nil, nil, denied
+		}
 		return nil, nil, &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownTransport}
 	}
 	defer resp.Body.Close()

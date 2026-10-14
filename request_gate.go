@@ -2,6 +2,8 @@ package linkedin
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -24,7 +26,23 @@ type gatedTransport struct {
 
 func (t *gatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err := t.gate(req.Context()); err != nil {
-		return nil, err
+		return nil, &RequestGateError{cause: err}
 	}
 	return t.base.RoundTrip(req)
+}
+
+// RequestGateError proves the host refused this HTTP attempt before transport
+// dispatch. Its message excludes URLs and the host error, which can be private.
+// Hosts can use errors.Is/As on Unwrap to choose their next eligible check.
+type RequestGateError struct{ cause error }
+
+func (e *RequestGateError) Error() string { return "linkedin: host request gate refused dispatch" }
+func (e *RequestGateError) Unwrap() error { return e.cause }
+
+func requestTransportError(err error) error {
+	var denied *RequestGateError
+	if errors.As(err, &denied) {
+		return denied
+	}
+	return fmt.Errorf("%w: %v", ErrRequestFailed, err)
 }

@@ -83,7 +83,7 @@ func TestRequestGateCountsWarmupAndRetry(t *testing.T) {
 		return nil
 	}))
 	_, e := c.GetMe(context.Background())
-	if e == nil || dispatched.Load() != 2 || reserved.Load() < 3 {
+	if !errors.Is(e, denied) || dispatched.Load() != 2 || reserved.Load() != 3 {
 		t.Fatalf("err=%v dispatched=%d reserved=%d", e, dispatched.Load(), reserved.Load())
 	}
 }
@@ -119,5 +119,31 @@ func TestActivityEmptyErrorsIsSuccess(t *testing.T) {
 	body := strings.Replace(conversationFixture, `{"data":`, `{"errors":[],"data":`, 1)
 	if _, e := activityFixtureClient(t, body).GetActivityConversations(context.Background(), "urn:li:fsd_profile:SELF"); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestRequestGateRefusalPreservesHostCause(t *testing.T) {
+	for _, phase := range []string{"warmup", "read", "write"} {
+		t.Run(phase, func(t *testing.T) {
+			cause := errors.New("private host context")
+			var calls atomic.Int32
+			c := New(Auth{LiAt: "fixture", CSRF: "fixture"}, WithMinRequestGap(0), WithRetry(3, 0), WithRequestGate(func(context.Context) error { return cause }), WithHTTPClient(&http.Client{Transport: outreachTransport(func(r *http.Request) (*http.Response, error) { calls.Add(1); return response(r, 200, `{}`), nil })}))
+			var err error
+			if phase != "warmup" {
+				c.warmedUp.Store(true)
+			}
+			if phase == "write" {
+				_, _, err = c.makeWriteRequest(context.Background(), apiBase+"/test", []byte(`{}`))
+			} else {
+				_, err = c.makeRequest(context.Background(), apiBase+"/test")
+			}
+			var denied *RequestGateError
+			if !errors.As(err, &denied) || !errors.Is(err, cause) || IsWriteUnknown(err) || calls.Load() != 0 {
+				t.Fatalf("err=%v calls=%d", err, calls.Load())
+			}
+			if strings.Contains(err.Error(), cause.Error()) {
+				t.Fatal("private host error leaked")
+			}
+		})
 	}
 }
