@@ -62,3 +62,10 @@ non-empty profile errors return `ErrProfileIncomplete` and never authorize a sen
 Offline tests cover authentication errors, identity-field errors, missing paths,
 incorrect result bindings and extra unresolved errors. A live resolver check is
 required before shipping this correction.
+
+Normalized message-to-conversation backlinks retain their identity without
+recursively expanding the conversation again. A backlink to another conversation
+is rejected. Normal message actors may match their sender; that is not itself a
+system event. Generated cards and unrelated or unresolved actors remain excluded
+from human reply counts. The redacted production mailbox fixture covers this
+shape, and a captured 20-conversation page parses in the offline replay.

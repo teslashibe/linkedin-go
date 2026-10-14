@@ -211,6 +211,28 @@ func activityNode(body []byte, key string) (json.RawMessage, error) {
 			}
 			out := map[string]any{}
 			for k, v := range x {
+				// A message's conversation is a backlink to the same collection
+				// that contains it. Retain its identity without walking the cycle.
+				if x["$type"] == "com.linkedin.messenger.Message" && (k == "*conversation" || k == "conversation") && v != nil {
+					if _, duplicate := x["conversation"]; k == "*conversation" && duplicate {
+						return nil, ErrParseFailed
+					}
+					bound := v
+					if k == "*conversation" {
+						ref, ok := v.(string)
+						if !ok {
+							return nil, ErrParseFailed
+						}
+						bound = refs[ref]
+					}
+					conversation, ok := bound.(map[string]any)
+					id, valid := conversation["entityUrn"].(string)
+					if !ok || !valid || activityError(conversation) || !validActivityURN(id, "msg_conversation") {
+						return nil, ErrParseFailed
+					}
+					out["conversation"] = map[string]any{"entityUrn": id}
+					continue
+				}
 				if strings.HasPrefix(k, "*") {
 					key := strings.TrimPrefix(k, "*")
 					if _, exists := x[key]; exists {
@@ -281,7 +303,10 @@ func validActivityURN(urn, kind string) bool {
 type rawActivityMessage struct {
 	URN          string `json:"entityUrn"`
 	Conversation string `json:"backendConversationUrn"`
-	Sender       struct {
+	Thread       struct {
+		URN string `json:"entityUrn"`
+	} `json:"conversation"`
+	Sender struct {
 		URN string `json:"hostIdentityUrn"`
 	} `json:"sender"`
 	Body *struct {
@@ -293,7 +318,7 @@ type rawActivityMessage struct {
 }
 
 func (raw rawActivityMessage) parse(conversation string) (ActivityMessage, error) {
-	if !validActivityURN(raw.URN, "msg_message") || raw.DeliveredAt <= 0 {
+	if !validActivityURN(raw.URN, "msg_message") || raw.DeliveredAt <= 0 || raw.Thread.URN != "" && raw.Thread.URN != conversation {
 		return ActivityMessage{}, ErrParseFailed
 	}
 	m := ActivityMessage{URN: raw.URN, ConversationURN: conversation, Body: "", SentAt: raw.DeliveredAt, Kind: "unknown"}
@@ -328,7 +353,20 @@ func (raw rawActivityMessage) parse(conversation string) (ActivityMessage, error
 			}
 		}
 	}
-	if (len(raw.Actor) > 0 && string(raw.Actor) != "null") || generated {
+	actorPresent := len(raw.Actor) > 0 && string(raw.Actor) != "null"
+	actorIsSender := false
+	if actorPresent {
+		var actor struct {
+			URN string `json:"hostIdentityUrn"`
+		}
+		if json.Unmarshal(raw.Actor, &actor) == nil {
+			identity, e := CanonicalMemberURN(actor.URN)
+			actorIsSender = e == nil && identity == m.SenderURN
+		}
+	}
+	// Normal messages include an actor equal to their sender. An unrelated or
+	// unresolved actor still cannot establish a human reply.
+	if actorPresent && !actorIsSender || generated {
 		m.Kind = "system"
 	} else if err == nil && !unknown && ((raw.Body != nil && strings.TrimSpace(raw.Body.Text) != "") || m.HasAttachment) {
 		m.Kind = "human"
