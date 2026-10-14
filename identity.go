@@ -179,11 +179,7 @@ func (c *Client) ResolveMember(ctx context.Context, identifier string) (*Member,
 		return nil, err
 	}
 	var profileEnvelope map[string]any
-	if json.Unmarshal(profileBody, &profileEnvelope) != nil || hasIdentityErrorEnvelope(profileEnvelope) {
-		return nil, ErrParseFailed
-	}
-	profileData, _ := profileEnvelope["data"].(map[string]any)
-	if hasIdentityErrorEnvelope(profileData) {
+	if json.Unmarshal(profileBody, &profileEnvelope) != nil {
 		return nil, ErrParseFailed
 	}
 	var response profileAPIResponse
@@ -216,6 +212,9 @@ func (c *Client) ResolveMember(ctx context.Context, identifier string) (*Member,
 	urn, err := CanonicalMemberURN(profile.URN)
 	if err != nil {
 		return nil, err
+	}
+	if !validProfileEnvelope(profileEnvelope, urn) {
+		return nil, errors.Join(ErrParseFailed, ErrProfileIncomplete)
 	}
 	member := &Member{URN: urn, PublicID: profile.PublicID, ProfileURL: profile.ProfileURL, InvitationState: "unknown"}
 	relationshipID := "urn:li:fsd_memberRelationship:" + strings.TrimPrefix(urn, "urn:li:fsd_profile:")
@@ -478,4 +477,66 @@ func hasIdentityErrorEnvelope(obj map[string]any) bool {
 		return hasErrorEnvelope(clean)
 	}
 	return hasErrorEnvelope(obj)
+}
+
+// The observed profile query can fail to resolve a deleted school company
+// while returning the exact member. Only that optional-field 404 is tolerated.
+// The error path must bind to the selected member in the actual result list.
+func validProfileEnvelope(root map[string]any, memberURN string) bool {
+	data, _ := root["data"].(map[string]any)
+	inner, _ := data["data"].(map[string]any)
+	collectionRoot := data
+	if inner != nil {
+		collectionRoot = inner
+	}
+	collection, _ := collectionRoot["identityDashProfilesByMemberIdentity"].(map[string]any)
+	elements, _ := collection["*elements"].([]any)
+	if elements == nil {
+		elements, _ = collection["elements"].([]any)
+	}
+	for _, wrapper := range []map[string]any{root, data, inner} {
+		clean := make(map[string]any, len(wrapper))
+		for k, v := range wrapper {
+			if k != "errors" {
+				clean[k] = v
+			}
+		}
+		if hasIdentityErrorEnvelope(clean) {
+			return false
+		}
+		value, present := wrapper["errors"]
+		if !present || value == nil {
+			continue
+		}
+		errors, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		for _, raw := range errors {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				return false
+			}
+			ext, _ := entry["extensions"].(map[string]any)
+			path, _ := entry["path"].([]any)
+			if ext["classification"] != "DataFetchingException" || ext["status"] != float64(404) || len(path) != 7 ||
+				path[0] != "identityDashProfilesByMemberIdentity" || path[1] != "elements" || path[3] != "profileTopEducation" || path[4] != "elements" || path[6] != "company" {
+				return false
+			}
+			index, indexOK := path[2].(float64)
+			education, educationOK := path[5].(float64)
+			if !indexOK || index < 0 || index >= float64(len(elements)) || index != float64(int(index)) || !educationOK || education < 0 || education > 1000 || education != float64(int(education)) {
+				return false
+			}
+			ref, _ := elements[int(index)].(string)
+			if direct, ok := elements[int(index)].(map[string]any); ok {
+				ref, _ = direct["entityUrn"].(string)
+			}
+			bound, err := CanonicalMemberURN(ref)
+			if err != nil || bound != memberURN {
+				return false
+			}
+		}
+	}
+	return true
 }

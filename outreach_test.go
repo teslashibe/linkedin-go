@@ -636,3 +636,73 @@ func TestOutreachPreflightNeverDispatchesWrongSenderOrRecipient(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileOptionalEducationCompany404IsBoundToExactMember(t *testing.T) {
+	fixture := func() map[string]any {
+		return map[string]any{
+			"data": map[string]any{
+				"data": map[string]any{"identityDashProfilesByMemberIdentity": map[string]any{"*elements": []any{"urn:li:fsd_profile:RECIPIENT"}}},
+				"errors": []any{map[string]any{
+					"extensions": map[string]any{"classification": "DataFetchingException", "status": float64(404)},
+					"path":       []any{"identityDashProfilesByMemberIdentity", "elements", float64(0), "profileTopEducation", "elements", float64(0), "company"},
+				}},
+			},
+			"included": []any{map[string]any{"$type": typeProfile, "entityUrn": "urn:li:fsd_profile:RECIPIENT", "publicIdentifier": "recipient"}},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any, map[string]any)
+		good   bool
+	}{
+		{"optional school company missing", nil, true},
+		{"auth denied", func(_ map[string]any, e map[string]any) { e["extensions"].(map[string]any)["status"] = 403 }, false},
+		{"server failure", func(_ map[string]any, e map[string]any) { e["extensions"].(map[string]any)["status"] = 500 }, false},
+		{"unknown classification", func(_ map[string]any, e map[string]any) {
+			e["extensions"].(map[string]any)["classification"] = "Unknown"
+		}, false},
+		{"identity field", func(_ map[string]any, e map[string]any) { e["path"].([]any)[3] = "entityUrn" }, false},
+		{"missing path", func(_ map[string]any, e map[string]any) { delete(e, "path") }, false},
+		{"wrong result index", func(_ map[string]any, e map[string]any) { e["path"].([]any)[2] = float64(1) }, false},
+		{"fractional result index", func(_ map[string]any, e map[string]any) { e["path"].([]any)[2] = 0.5 }, false},
+		{"missing binding", func(root map[string]any, _ map[string]any) { delete(root["data"].(map[string]any), "data") }, false},
+		{"wrong binding", func(root map[string]any, _ map[string]any) {
+			root["data"].(map[string]any)["data"].(map[string]any)["identityDashProfilesByMemberIdentity"].(map[string]any)["*elements"] = []any{"urn:li:fsd_profile:OTHER"}
+		}, false},
+		{"additional unscoped error", func(root map[string]any, _ map[string]any) {
+			d := root["data"].(map[string]any)
+			d["errors"] = append(d["errors"].([]any), map[string]any{"message": "unknown"})
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := fixture()
+			e := root["data"].(map[string]any)["errors"].([]any)[0].(map[string]any)
+			if tc.change != nil {
+				tc.change(root, e)
+			}
+			body, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var relationships atomic.Int32
+			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				if strings.Contains(req.URL.Path, "MemberRelationships/") {
+					relationships.Add(1)
+					return fixtureRead(req, 2), nil
+				}
+				if req.Method != http.MethodGet {
+					t.Fatal("profile validation dispatched a write")
+				}
+				return response(req, 200, string(body)), nil
+			})
+			member, err := c.ResolveMember(context.Background(), "recipient")
+			if tc.good {
+				if err != nil || member.URN != "urn:li:fsd_profile:RECIPIENT" || member.InvitationState != "available" || relationships.Load() != 1 {
+					t.Fatalf("optional field blocked verified member: %+v %v", member, err)
+				}
+			} else if !errors.Is(err, ErrProfileIncomplete) || relationships.Load() != 0 {
+				t.Fatalf("unresolved error reached eligibility: member=%+v err=%v reads=%d", member, err, relationships.Load())
+			}
+		})
+	}
+}

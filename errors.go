@@ -16,6 +16,7 @@ var (
 	ErrInvalidParams     = errors.New("linkedin: invalid parameters")
 	ErrRequestFailed     = errors.New("linkedin: request failed")
 	ErrParseFailed       = errors.New("linkedin: failed to parse response")
+	ErrProfileIncomplete = errors.New("linkedin: profile response has an unresolved field error")
 	// ErrTimeout is a typed retryable deadline/budget failure. Hosts should map
 	// it to timeout/transient_error instead of surfacing raw context errors.
 	ErrTimeout       = errors.New("linkedin: request timed out")

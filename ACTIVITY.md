@@ -52,4 +52,13 @@ Non-empty lists and malformed error fields still reject the response. This
 read-only handling does not relax write-receipt or exact-parent checks. The
 regression suite reproduces the empty-list failure with synthetic profiles;
 confirmation against the profile response reported by the companion application's
-Keywork diagnosis remains outstanding.
+Keywork diagnosis remains separate.
+
+The production diagnosis identified an optional education-company lookup returning
+a GraphQL `DataFetchingException` with status 404. `ResolveMember` tolerates only
+that exact path, bound through the result list to the selected canonical member.
+It still verifies relationship and invitation eligibility independently. Other
+non-empty profile errors return `ErrProfileIncomplete` and never authorize a send.
+Offline tests cover authentication errors, identity-field errors, missing paths,
+incorrect result bindings and extra unresolved errors. A live resolver check is
+required before shipping this correction.
