@@ -26,6 +26,7 @@ var Excluded = map[string]string{
 	"SendConnectionInvitation": "host-owned explicitly approved outreach operation; no raw provider tool",
 	"HealthCheck":              "session verification is owned by the host so it can coordinate login and challenge UI",
 	"RateLimit":                "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
+	"LastResponse":             "safe response diagnostics for host persistence, not a provider operation",
 	"RequestsRemaining":        "internal observability for the human pacer; surface via the host's status reporting, not as a callable tool",
 	"BudgetExhausted":          "internal observability for the human pacer daily budget; surface via the host's status reporting, not as a callable tool",
 	"PendingRequests":          "internal observability for the per-client serialization queue; surface via the host's status reporting, not as a callable tool",

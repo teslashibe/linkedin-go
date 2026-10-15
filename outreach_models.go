@@ -85,6 +85,7 @@ type WriteError struct {
 	StatusCode    int
 	RetryAfter    time.Duration
 	Cause         error
+	Observation   ResponseObservation
 	unknownReason string
 	unknownDetail string
 }

@@ -3,7 +3,6 @@ package linkedin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -80,68 +79,46 @@ func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payloa
 	}
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
-	c.updateRateLimit(resp.Header)
+	observation := c.observeResponse(http.MethodPost, resp)
 	body, err := readResponseBody(resp)
 	if err != nil {
-		return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, unknownReason: writeUnknownResponseBody}
+		return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, Observation: observation, unknownReason: writeUnknownResponseBody}
 	}
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") || detectRestrictionInBody(body) != nil {
-			return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, unknownReason: writeUnknownResponseContent}
+			return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, Observation: observation, unknownReason: writeUnknownResponseContent}
 		}
 		return body, resp.Header.Clone(), nil
 	}
 	cause := error(ErrWriteUnknown)
-	wait := parseRetryAfter(resp.Header.Get("Retry-After"), 0)
+	wait := observation.RetryAt.Sub(observation.ObservedAt)
+	if observation.RetryAt.IsZero() {
+		wait = 0
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		cause = ErrUnauthorized
 	case http.StatusTooManyRequests:
 		cause = ErrRateLimited
+		rejection, reason, code := providerRejection(body)
+		observation.ProviderReason, observation.ServiceErrorCode = reason, code
+		if reason == "write_rejected" {
+			observation.ProviderReason = "rate_limited"
+		} else {
+			cause = errors.Join(ErrRateLimited, rejection)
+		}
 	case http.StatusNotFound:
 		cause = ErrNotFound
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusConflict, http.StatusUnprocessableEntity:
-		cause = writeRejection(body)
+		cause, observation.ProviderReason, observation.ServiceErrorCode = providerRejection(body)
 	}
-	return nil, nil, &WriteError{StatusCode: resp.StatusCode, RetryAfter: wait, Cause: cause, unknownReason: writeUnknownResponseStatus}
+	c.storeResponse(observation)
+	return nil, nil, &WriteError{StatusCode: resp.StatusCode, RetryAfter: wait, Cause: cause, Observation: observation, unknownReason: writeUnknownResponseStatus}
 }
 
 func writeRejection(body []byte) error {
-	if err := detectRestrictionInBody(body); err != nil {
-		return err
-	}
-	var response struct {
-		Code             string `json:"code"`
-		ServiceErrorCode string `json:"serviceErrorCode"`
-		Data             *struct {
-			Code string `json:"code"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &response) != nil {
-		return ErrWriteRejected
-	}
-	code := response.Code
-	if response.Data != nil {
-		if code != "" && response.Data.Code != "" && code != response.Data.Code {
-			return ErrWriteRejected
-		}
-		if code == "" {
-			code = response.Data.Code
-		}
-	}
-	switch strings.ToUpper(code) {
-	case "ALREADY_CONNECTED":
-		return ErrAlreadyConnected
-	case "INVITATION_PENDING", "ALREADY_INVITED":
-		return ErrInvitationPending
-	case "EMAIL_REQUIRED":
-		return ErrEmailRequired
-	case "NOTE_UNAVAILABLE", "PERSONALIZED_INVITATION_LIMIT_REACHED":
-		return ErrNoteUnavailable
-	case "RECIPIENT_NOT_MESSAGEABLE", "NOT_CONNECTED", "RECIPIENT_NOT_FIRST_DEGREE_CONNECTION":
-		return ErrRecipientNotMessageable
-	}
-	return ErrWriteRejected
+	err, _, _ := providerRejection(body)
+	return err
 }
 
 func unknownReceipt() error { return &WriteError{Cause: ErrWriteUnknown} }

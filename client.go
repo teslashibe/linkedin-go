@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -97,7 +96,7 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 	defer resp.Body.Close()
 
 	c.absorbSetCookies(resp)
-	c.updateRateLimit(resp.Header)
+	c.observeResponse(http.MethodGet, resp)
 
 	if err := c.classifyResponse(resp, requestURL); err != nil {
 		return nil, err
@@ -153,6 +152,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 	defer resp.Body.Close()
 
 	c.absorbSetCookies(resp)
+	c.observeResponse(http.MethodGet, resp)
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
@@ -160,9 +160,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		c.pacer.applyServerBackoff(wait)
-		return nil, &retryAfterError{wait: wait, err: ErrRateLimited}
+		return nil, c.rateLimitFailure(resp)
 	case resp.StatusCode >= 500:
 		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
@@ -210,6 +208,21 @@ func (c *Client) makePostRequest(ctx context.Context, requestURL string, payload
 // gateBeforeRequest applies humanized pacing (or the legacy minGap path),
 // returning errors from the daily budget / working-hours guard.
 func (c *Client) gateBeforeRequest(ctx context.Context) error {
+	// Provider deadlines apply regardless of which optional pacing policy is
+	// configured, including after a single-dispatch POST returned a 429.
+	c.rlMu.Lock()
+	reset := c.rlState.Reset
+	blocked := c.rlState.Remaining == 0
+	c.rlMu.Unlock()
+	if wait := time.Until(reset); blocked && wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return mapCtxErr(ctx.Err())
+		case <-timer.C:
+		}
+	}
 	if c.pacer != nil {
 		return mapCtxErr(c.pacer.wait(ctx))
 	}
@@ -326,21 +339,7 @@ func (c *Client) classifyResponse(resp *http.Response, requestURL string) error 
 	case resp.StatusCode == http.StatusNotFound:
 		return ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		c.rlMu.Lock()
-		c.rlState.Remaining = 0
-		c.rlState.RetryAfter = wait
-		if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
-			c.rlState.Reset = time.Now().Add(wait)
-		}
-		c.rlMu.Unlock()
-		c.pacer.applyServerBackoff(wait)
-		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
-		}
-		c.gapMu.Unlock()
-		return &retryAfterError{wait: wait, err: ErrRateLimited}
+		return c.rateLimitFailure(resp)
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
@@ -458,6 +457,10 @@ func (c *Client) warmUp(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
+	c.observeResponse(http.MethodGet, resp)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return c.rateLimitFailure(resp)
+	}
 
 	body, err := readResponseBodyLimit(resp, 64*1024)
 	if err != nil {
@@ -512,6 +515,7 @@ func isNonRecoverable(err error) bool {
 	var nre *nonRetryableError
 	var denied *RequestGateError
 	return errors.As(err, &nre) || errors.As(err, &denied) ||
+		errors.Is(err, ErrNoteUnavailable) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrAccountRestricted) ||
 		errors.Is(err, ErrChallengeRequired) ||
@@ -560,63 +564,6 @@ func wrapWarmUpTransportErr(err error) error {
 		return fmt.Errorf("%w: warm-up: %v", ErrTimeout, err)
 	}
 	return fmt.Errorf("%w: warm-up: %v", ErrRequestFailed, err)
-}
-
-func parseRetryAfter(val string, fallback time.Duration) time.Duration {
-	if val == "" {
-		return fallback
-	}
-	trimmed := strings.TrimSpace(val)
-	if n, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-		if n > 1_000_000_000 {
-			if d := time.Until(time.Unix(n, 0)); d > 0 {
-				return d
-			}
-			return fallback
-		}
-		return time.Duration(n) * time.Second
-	}
-	if t, err := http.ParseTime(trimmed); err == nil {
-		if d := time.Until(t); d > 0 {
-			return d
-		}
-	}
-	return fallback
-}
-
-// updateRateLimit reads standard rate-limit headers and updates tracked state.
-func (c *Client) updateRateLimit(h http.Header) {
-	c.rlMu.Lock()
-	defer c.rlMu.Unlock()
-	if v := rlHeader(h, "Limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			c.rlState.Limit = n
-		}
-	}
-	if v := rlHeader(h, "Remaining"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			c.rlState.Remaining = n
-		}
-	}
-	if v := rlHeader(h, "Reset"); v != "" {
-		if ts, err := strconv.ParseInt(v, 10, 64); err == nil {
-			if ts > 1_000_000_000 {
-				c.rlState.Reset = time.Unix(ts, 0)
-			} else {
-				c.rlState.Reset = time.Now().Add(time.Duration(ts) * time.Second)
-			}
-		}
-	}
-}
-
-// rlHeader returns the value of a rate-limit header, checking four common prefix variants.
-func rlHeader(h http.Header, suffix string) string {
-	for _, p := range []string{"X-RateLimit-", "X-Rate-Limit-", "X-Ratelimit-", "RateLimit-"} {
-		if v := strings.TrimSpace(h.Get(p + suffix)); v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // adaptiveGap returns the delay before the next request based on rate-limit state.

@@ -162,6 +162,31 @@ Round-robin skips members that are in use, over daily budget, in cooldown, or
 soft-skipped after auth/challenge errors. `pool.Status()` / `pool.Available()`
 are for operator dashboards.
 
+## Response diagnostics
+
+`Client.LastResponse()` returns bounded metadata for the most recently received
+HTTP response, including successful responses. `WriteError.Observation` keeps
+the exact dispatched response attached to a failed write. It remains available
+even if the response body was incomplete and delivery is unknown.
+
+`ResponseObservation` records header presence and validity separately, the
+observed and server times, each supported quota family, the effective retry
+deadline and its source. `Retry-After` and `RateLimit-Reset` numeric values are
+delay-seconds. Legacy `X-RateLimit-Reset` and `X-Rate-Limit-Reset` retain both
+bounded relative delays and epoch-sized Unix timestamps; `Format` records the
+interpretation. Absolute deadlines account for a valid server `Date`. The latest
+applicable provider deadline wins. A reset on a successful response creates a
+hold only with explicit zero remaining. A 429 without usable timing gets a
+labelled one-minute fallback, which is not a claimed provider reset time.
+
+`ParseResponseObservation` exposes the same parser to host transports, and
+`Sanitized` validates metadata again before persistence. Neither retains raw
+headers, response bodies, URLs, cookies or credentials. Recognized rejection
+reasons, bounded numeric service codes and validated request identifiers are
+available for diagnostics. A complete 429 with a recognized note restriction
+matches both `ErrRateLimited` and `ErrNoteUnavailable`. An incomplete write
+response stays `ErrWriteUnknown` and is never automatically replayed.
+
 ## MCP support
 
 This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 19 tools cover the full client API: people search, profile fetch, group search/fetch/posts/members/membership/post, messaging (list/read/send), and typeahead resolvers (locations, companies, schools).
