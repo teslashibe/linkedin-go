@@ -79,10 +79,11 @@ type Client struct {
 	// overrides browser.UserAgent.
 	userAgent string
 
-	rlMu      sync.Mutex
-	rlState   RateLimitState
-	gapMu     sync.Mutex
-	lastReqAt time.Time
+	rlMu         sync.Mutex
+	rlState      RateLimitState
+	lastResponse ResponseObservation
+	gapMu        sync.Mutex
+	lastReqAt    time.Time
 
 	// reqMu serializes the entire authenticated-request lifecycle
 	// (pacer wait + HTTP roundtrip + retries + response processing). One
