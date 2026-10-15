@@ -12,6 +12,7 @@ package mcp
 //   - if the method is unsuitable for an agent (internal observability,
 //     auth-only helper, etc.), add it here with a reason
 var Excluded = map[string]string{
+	"OpenOutreach":             "host-owned operation-scoped sender proof and prepared writes under an account lease",
 	"FindActivityConversation": "host-owned exact approved recipient inbox check",
 	"GetMemberRelationship":    "host-owned bounded acceptance polling of previously resolved recipients",
 	"GetActivityConversations": "host-owned private inbox sync with durable authorization and allowance",

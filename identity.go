@@ -35,7 +35,28 @@ func validOpaqueID(id string) bool {
 // GetMe proves the current authenticated member using /me, with a safe legacy
 // read fallback. A missing or ambiguous authenticated reference fails closed.
 func (c *Client) GetMe(ctx context.Context) (*Profile, error) {
+	profile, _, err := c.getMe(ctx)
+	return profile, err
+}
+
+func (c *Client) getMe(ctx context.Context) (*Profile, uint64, error) {
+	c.identityMu.Lock()
+	proof := c.identityProof.Add(1)
 	c.verifiedMember.Store("")
+	c.identityMu.Unlock()
+	profile, err := c.readMe(ctx)
+	c.identityMu.Lock()
+	defer c.identityMu.Unlock()
+	if c.identityProof.Load() != proof {
+		return nil, proof, ErrIdentityUnavailable
+	}
+	if err == nil {
+		c.verifiedMember.Store(profile.URN)
+	}
+	return profile, proof, err
+}
+
+func (c *Client) readMe(ctx context.Context) (*Profile, error) {
 	for _, path := range []string{apiBase + "/me", apiBase + "/identity/profiles/me"} {
 		body, err := c.makeRequest(ctx, path)
 		if err != nil {
@@ -44,11 +65,7 @@ func (c *Client) GetMe(ctx context.Context) (*Profile, error) {
 			}
 			return nil, err
 		}
-		profile, err := parseAuthenticatedProfile(body)
-		if err == nil {
-			c.verifiedMember.Store(profile.URN)
-		}
-		return profile, err
+		return parseAuthenticatedProfile(body)
 	}
 	return nil, ErrIdentityUnavailable
 }

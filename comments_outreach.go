@@ -267,6 +267,10 @@ func (c *Client) CreateComment(ctx context.Context, p CreateCommentParams) (*Pos
 	if p.ActivityURN != "" && p.ActivityURN != target.ActivityURN {
 		return nil, ErrInvalidParams
 	}
+	return c.sendComment(ctx, p, target, me.URN, nil)
+}
+
+func (c *Client) sendComment(ctx context.Context, p CreateCommentParams, target *CommentTarget, sender string, guard func() error) (*PostComment, error) {
 	thread := target.ActivityURN
 	if target.ParentCommentURN != "" {
 		parentID := strings.TrimSuffix(strings.Split(target.ParentCommentURN, ",")[1], ")")
@@ -276,11 +280,11 @@ func (c *Client) CreateComment(ctx context.Context, p CreateCommentParams) (*Pos
 		"commentary": map[string]any{"text": p.Text, "attributesV2": []any{}, "$type": "com.linkedin.voyager.dash.common.text.TextViewModel"},
 		"threadUrn":  thread,
 	})
-	body, headers, err := c.makeWriteRequest(ctx, apiBase+"/voyagerSocialDashNormComments?decorationId=com.linkedin.voyager.dash.deco.social.NormComment-43", payload)
+	body, headers, err := c.makeGuardedWriteRequest(ctx, apiBase+"/voyagerSocialDashNormComments?decorationId=com.linkedin.voyager.dash.deco.social.NormComment-43", payload, guard)
 	if err != nil {
 		return nil, err
 	}
-	urn, err := commentReceipt(body, headers.Get("X-RestLi-Id"), headers.Get("Location"), target, p.Text, me.URN)
+	urn, err := commentReceipt(body, headers.Get("X-RestLi-Id"), headers.Get("Location"), target, p.Text, sender)
 	if err != nil {
 		return nil, err
 	}

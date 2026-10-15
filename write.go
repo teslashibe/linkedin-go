@@ -34,6 +34,13 @@ func (c *Client) requireSender(ctx context.Context, expected string) (*Profile, 
 // makeWriteRequest sends exactly one POST. Safe warm-up reads finish before the
 // dispatch boundary. Redirects, recovery and HTTP failures never replay a write.
 func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payload []byte) ([]byte, http.Header, error) {
+	return c.makeGuardedWriteRequest(ctx, requestURL, payload, nil)
+}
+
+func (c *Client) makeGuardedWriteRequest(ctx context.Context, requestURL string, payload []byte, guard func() error) ([]byte, http.Header, error) {
+	if guard != nil {
+		ctx = context.WithValue(ctx, preparedWriteGuardKey{}, guard)
+	}
 	if c.auth.LiAt == "" || c.auth.CSRF == "" {
 		return nil, nil, ErrInvalidAuth
 	}
@@ -68,6 +75,11 @@ func (c *Client) makeWriteRequest(ctx context.Context, requestURL string, payloa
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if ctx.Err() != nil {
 		return nil, nil, mapCtxErr(ctx.Err())
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return nil, nil, err
+		}
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

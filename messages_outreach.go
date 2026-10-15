@@ -26,25 +26,36 @@ func (c *Client) SendMessageWithReceipt(ctx context.Context, p DirectMessagePara
 	if err != nil {
 		return nil, err
 	}
+	if err := messageRecipient(member, recipient, me.URN); err != nil {
+		return nil, err
+	}
+	return c.sendDirectMessage(ctx, p, recipient, me.URN, nil)
+}
+
+func messageRecipient(member *Member, recipient, sender string) error {
 	if member.URN != recipient {
-		return nil, ErrRecipientIdentityMismatch
+		return ErrRecipientIdentityMismatch
 	}
 	if member.ConnectionDegree != 1 {
-		return nil, ErrRecipientNotMessageable
+		return ErrRecipientNotMessageable
 	}
-	if recipient == me.URN {
-		return nil, ErrInvalidParams
+	if recipient == sender {
+		return ErrInvalidParams
 	}
+	return nil
+}
+
+func (c *Client) sendDirectMessage(ctx context.Context, p DirectMessageParams, recipient, sender string, guard func() error) (*MessageReceipt, error) {
 	origin, tracking, err := messageToken()
 	if err != nil {
 		return nil, err
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"message":    map[string]any{"body": map[string]any{"attributes": []any{}, "text": p.Body}, "renderContentUnions": []any{}, "originToken": origin},
-		"mailboxUrn": me.URN, "trackingId": tracking, "dedupeByClientGeneratedToken": false,
+		"mailboxUrn": sender, "trackingId": tracking, "dedupeByClientGeneratedToken": false,
 		"hostRecipientUrns": []string{recipient},
 	})
-	body, _, err := c.makeWriteRequest(ctx, apiBase+"/voyagerMessagingDashMessengerMessages?action=createMessage", payload)
+	body, _, err := c.makeGuardedWriteRequest(ctx, apiBase+"/voyagerMessagingDashMessengerMessages?action=createMessage", payload, guard)
 	if err != nil {
 		return nil, err
 	}
@@ -52,15 +63,15 @@ func (c *Client) SendMessageWithReceipt(ctx context.Context, p DirectMessagePara
 	if err != nil {
 		return nil, unknownReceiptReason(writeUnknownCreationValue)
 	}
-	message, messageOK := selectMessagingReceipt(value, []string{"backendUrn", "entityUrn"}, me.URN, "urn:li:msg_message:", "urn:li:messagingMessage:")
-	conversation, conversationOK := selectMessagingReceipt(value, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, me.URN, "urn:li:msg_conversation:", "urn:li:messagingThread:")
+	message, messageOK := selectMessagingReceipt(value, []string{"backendUrn", "entityUrn"}, sender, "urn:li:msg_message:", "urn:li:messagingMessage:")
+	conversation, conversationOK := selectMessagingReceipt(value, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, sender, "urn:li:msg_conversation:", "urn:li:messagingThread:")
 	if !messageOK {
 		return nil, unknownReceiptReason(writeUnknownMessageReceipt)
 	}
 	if !conversationOK {
 		return nil, unknownReceiptReason(writeUnknownConversationReceipt)
 	}
-	for key, expected := range map[string]string{"originToken": origin, "mailboxUrn": me.URN, "senderUrn": me.URN, "recipientUrn": recipient} {
+	for key, expected := range map[string]string{"originToken": origin, "mailboxUrn": sender, "senderUrn": sender, "recipientUrn": recipient} {
 		if observed, exists := value[key]; exists && observed != expected {
 			reason := writeUnknownIdentityMismatch
 			if key == "originToken" {
@@ -74,7 +85,7 @@ func (c *Client) SendMessageWithReceipt(ctx context.Context, p DirectMessagePara
 			raw, ok := observed.(string)
 			raw = strings.TrimPrefix(raw, "urn:li:msg_messagingParticipant:")
 			member, err := CanonicalMemberURN(raw)
-			if !ok || err != nil || member != me.URN {
+			if !ok || err != nil || member != sender {
 				return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
 			}
 		}
