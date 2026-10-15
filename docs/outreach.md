@@ -37,11 +37,31 @@ inside `noConnection` is contradictory and still fails closed. This distinction
 comes from a bounded authenticated read of an approved controlled target, with
 zero provider writes; it does not prove invitation delivery or note entitlement.
 
-All write methods perform their own strict sender probe before destination
+The immediate write methods perform their own strict sender probe before destination
 verification. `ErrSenderIdentityMismatch` and `ErrRecipientIdentityMismatch`
 distinguish account replacement from a changed target. The host must reconnect
 the same immutable sender or obtain fresh approval; changing either identity is
 not a retry.
+
+Hosts that reserve a durable send after preflight can use `OpenOutreach(ctx,
+expectedSenderURN)` on one client. It performs the same strict sender probe;
+its context bounds only that probe. The returned `OutreachSession` prepares an
+invitation, message or comment using the existing destination checks and exact
+text. Preparation can resolve a recipient from an approved profile URL when
+`RecipientURN` is empty; a supplied recipient identity must still match.
+The host reads the prepared handle's `Member()` or `Target()`, completes its
+local authorization/reservation, then calls `Send(ctx)`. The prepared handle
+keeps its original text and target private, uses the same client and cookie jar,
+and issues no repeated sender or destination reads. The existing single-POST
+transport and receipt checks remain authoritative.
+
+The host must retain its account lease, use its operation context for preparation
+and sending, and close the session when that operation ends. Prepared handles are
+single-use, including after a failed local gate. Cancellation of their preparation
+context, session closure, or any later `GetMe` on the client prevents dispatch.
+These local guards run again after pacing immediately before the POST. There is
+no persistent sender or recipient cache and no permission to repeat an uncertain
+write.
 
 `VerifiedMemberURN()` reports only the last successful strict self proof. Fresh
 `GetMe` clears the old proof before dispatching. `AuthSnapshot()` exports the

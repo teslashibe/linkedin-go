@@ -69,7 +69,9 @@ type Client struct {
 	activityQueries ActivityQueries
 
 	warmedUp       atomic.Bool
-	verifiedMember atomic.Value // string; proof from the last strict GetMe
+	identityMu     sync.Mutex    // serializes proof invalidation and publication
+	verifiedMember atomic.Value  // string; proof from the last strict GetMe
+	identityProof  atomic.Uint64 // invalidates prepared writes when GetMe runs again
 
 	// vanityURN caches vanity-name → member URN resolutions for the life of
 	// this warm affine client so GetUserPosts can skip repeated GetProfile hops.

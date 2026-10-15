@@ -56,6 +56,21 @@ func TestOutreachAuthenticatedIdentity(t *testing.T) {
 			}
 		})
 	}
+	t.Run("superseded probe cannot publish its identity", func(t *testing.T) {
+		var c *Client
+		c = offlineClient(func(req *http.Request) (*http.Response, error) {
+			cancelled, cancel := context.WithCancel(context.Background())
+			cancel()
+			// A later probe invalidates this one while its response is in flight.
+			if _, err := c.GetMe(cancelled); err == nil {
+				t.Fatal("cancelled replacement probe succeeded")
+			}
+			return fixtureRead(req, 1), nil
+		})
+		if _, err := c.OpenOutreach(context.Background(), "urn:li:fsd_profile:SELF"); !errors.Is(err, ErrIdentityUnavailable) || c.VerifiedMemberURN() != "" {
+			t.Fatalf("superseded identity was published: err=%v member=%q", err, c.VerifiedMemberURN())
+		}
+	})
 }
 
 func TestOutreachProfileIdentifiersFailClosed(t *testing.T) {
@@ -358,11 +373,15 @@ func fixtureRead(req *http.Request, degree int) *http.Response {
 // Request/receipt shapes are pinned to primary author sources in docs/outreach.md.
 // These stubs exercise protocol handling; they do not establish live delivery.
 func TestOutreachExactTextAndSingleWrite(t *testing.T) {
-	for _, action := range []string{"dm", "reply", "reply_top_level", "connect"} {
-		t.Run(action, func(t *testing.T) {
+	for _, name := range []string{"dm", "reply", "reply_top_level", "connect", "prepared_dm", "prepared_reply", "prepared_reply_top_level", "prepared_connect"} {
+		t.Run(name, func(t *testing.T) {
+			action := strings.TrimPrefix(name, "prepared_")
+			prepared := name != action
 			text := "  exact 😀\n "
 			var writes atomic.Int32
+			var requests atomic.Int32
 			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				requests.Add(1)
 				if req.Method != http.MethodPost {
 					degree := 2
 					if action == "dm" {
@@ -409,17 +428,73 @@ func TestOutreachExactTextAndSingleWrite(t *testing.T) {
 				}
 			})
 			var err error
-			switch action {
-			case "dm":
-				_, err = c.SendMessageWithReceipt(context.Background(), DirectMessageParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Body: text})
-			case "reply", "reply_top_level":
-				parent := ""
-				if action == "reply" {
-					parent = "urn:li:comment:(activity:123,456)"
+			if prepared {
+				c.warmedUp.Store(false)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				probe, stopProbe := context.WithCancel(ctx)
+				op, openErr := c.OpenOutreach(probe, "urn:li:fsd_profile:SELF")
+				stopProbe() // The probe context does not shorten the host operation.
+				if openErr != nil {
+					t.Fatal(openErr)
 				}
-				_, err = c.CreateComment(context.Background(), CreateCommentParams{PostURN: "urn:li:activity:123", ParentCommentURN: parent, ExpectedSenderURN: "urn:li:fsd_profile:SELF", Text: text})
-			default:
-				_, err = c.SendConnectionInvitation(context.Background(), InvitationParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: text})
+				defer op.Close()
+				var send func(context.Context) error
+				switch action {
+				case "dm":
+					p := DirectMessageParams{RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Body: text}
+					h, e := op.PrepareMessage(ctx, p)
+					if e != nil {
+						t.Fatal(e)
+					}
+					p.Body = "changed"
+					member := h.Member()
+					member.URN = "changed"
+					send = func(ctx context.Context) error { _, e := h.Send(ctx); return e }
+				case "reply", "reply_top_level":
+					parent := ""
+					if action == "reply" {
+						parent = "urn:li:comment:(activity:123,456)"
+					}
+					h, e := op.PrepareComment(ctx, CreateCommentParams{PostURN: "urn:li:activity:123", ParentCommentURN: parent, ExpectedSenderURN: "urn:li:fsd_profile:SELF", Text: text})
+					if e != nil {
+						t.Fatal(e)
+					}
+					target := h.Target()
+					target.ActivityURN = "changed"
+					send = func(ctx context.Context) error { _, e := h.Send(ctx); return e }
+				default:
+					h, e := op.PrepareInvitation(ctx, InvitationParams{RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: text})
+					if e != nil {
+						t.Fatal(e)
+					}
+					copy := *h
+					send = func(ctx context.Context) error { _, e := copy.Send(ctx); return e }
+				}
+				err = send(ctx)
+				if err == nil && !errors.Is(send(ctx), ErrInvalidParams) {
+					t.Fatal("prepared write allowed reuse")
+				}
+				want := int32(5)
+				if action == "reply_top_level" {
+					want = 4
+				}
+				if requests.Load() != want {
+					t.Fatalf("prepared requests=%d want=%d", requests.Load(), want)
+				}
+			} else {
+				switch action {
+				case "dm":
+					_, err = c.SendMessageWithReceipt(context.Background(), DirectMessageParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Body: text})
+				case "reply", "reply_top_level":
+					parent := ""
+					if action == "reply" {
+						parent = "urn:li:comment:(activity:123,456)"
+					}
+					_, err = c.CreateComment(context.Background(), CreateCommentParams{PostURN: "urn:li:activity:123", ParentCommentURN: parent, ExpectedSenderURN: "urn:li:fsd_profile:SELF", Text: text})
+				default:
+					_, err = c.SendConnectionInvitation(context.Background(), InvitationParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: text})
+				}
 			}
 			if err != nil || writes.Load() != 1 {
 				t.Fatalf("writes=%d err=%v", writes.Load(), err)
@@ -634,6 +709,67 @@ func TestOutreachPreflightNeverDispatchesWrongSenderOrRecipient(t *testing.T) {
 		if !errors.Is(err, tc.want) || writes.Load() != 0 {
 			t.Fatalf("writes=%d err=%v want=%v", writes.Load(), err, tc.want)
 		}
+		op, err := c.OpenOutreach(context.Background(), tc.sender)
+		if err == nil {
+			defer op.Close()
+			_, err = op.PrepareMessage(context.Background(), DirectMessageParams{RecipientURN: tc.recipient, RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: tc.sender, Body: "approved"})
+		}
+		if !errors.Is(err, tc.want) || writes.Load() != 0 {
+			t.Fatalf("prepared writes=%d err=%v want=%v", writes.Load(), err, tc.want)
+		}
+	}
+	for _, state := range []string{"closed", "cancelled", "new_proof", "gate_refused", "gate_closed", "gate_new_proof"} {
+		t.Run(state, func(t *testing.T) {
+			var writes atomic.Int32
+			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodPost {
+					writes.Add(1)
+				}
+				return fixtureRead(req, 1), nil
+			})
+			op, err := c.OpenOutreach(context.Background(), "urn:li:fsd_profile:SELF")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer op.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			h, err := op.PrepareMessage(ctx, DirectMessageParams{RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Body: "approved"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch state {
+			case "closed":
+				op.Close()
+			case "cancelled":
+				cancel()
+			case "new_proof":
+				if _, err := c.GetMe(ctx); err != nil {
+					t.Fatal(err)
+				}
+			case "gate_refused":
+				c.cooldownUntil = time.Now().Add(time.Hour)
+			case "gate_closed", "gate_new_proof":
+				c.httpClient.Transport = &gatedTransport{base: c.httpClient.Transport, gate: func(context.Context) error {
+					if state == "gate_closed" {
+						op.Close()
+					} else {
+						cancelled, stop := context.WithCancel(context.Background())
+						stop()
+						_, _ = c.GetMe(cancelled)
+					}
+					return nil
+				}}
+			}
+			if _, err := h.Send(context.Background()); err == nil || writes.Load() != 0 {
+				t.Fatalf("prepared state=%s writes=%d err=%v", state, writes.Load(), err)
+			}
+			// A refused local attempt cannot turn the same handle into a retry.
+			c.cooldownUntil = time.Time{}
+			if _, err := h.Send(context.Background()); !errors.Is(err, ErrInvalidParams) || writes.Load() != 0 {
+				t.Fatalf("prepared retry state=%s writes=%d err=%v", state, writes.Load(), err)
+			}
+		})
 	}
 }
 

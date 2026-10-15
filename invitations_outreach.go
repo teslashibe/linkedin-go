@@ -23,26 +23,37 @@ func (c *Client) SendConnectionInvitation(ctx context.Context, p InvitationParam
 	if err != nil {
 		return nil, err
 	}
+	if err := invitationRecipient(member, recipient, me.URN); err != nil {
+		return nil, err
+	}
+	return c.sendInvitation(ctx, p, recipient, nil)
+}
+
+func invitationRecipient(member *Member, recipient, sender string) error {
 	if member.URN != recipient {
-		return nil, ErrRecipientIdentityMismatch
+		return ErrRecipientIdentityMismatch
 	}
 	switch member.InvitationState {
 	case "connected":
-		return nil, ErrAlreadyConnected
+		return ErrAlreadyConnected
 	case "pending":
-		return nil, ErrInvitationPending
+		return ErrInvitationPending
 	case "available":
 	default:
-		return nil, ErrEligibilityUnknown
+		return ErrEligibilityUnknown
 	}
-	if recipient == me.URN {
-		return nil, ErrInvalidParams
+	if recipient == sender {
+		return ErrInvalidParams
 	}
+	return nil
+}
+
+func (c *Client) sendInvitation(ctx context.Context, p InvitationParams, recipient string, guard func() error) (*InvitationReceipt, error) {
 	payload, _ := json.Marshal(map[string]any{
 		"invitee":       map[string]any{"inviteeUnion": map[string]any{"memberProfile": recipient}},
 		"customMessage": p.Note,
 	})
-	body, _, err := c.makeWriteRequest(ctx, apiBase+"/voyagerRelationshipsDashMemberRelationships?action=verifyQuotaAndCreateV2&decorationId=com.linkedin.voyager.dash.deco.relationships.InvitationCreationResultWithInvitee-2", payload)
+	body, _, err := c.makeGuardedWriteRequest(ctx, apiBase+"/voyagerRelationshipsDashMemberRelationships?action=verifyQuotaAndCreateV2&decorationId=com.linkedin.voyager.dash.deco.relationships.InvitationCreationResultWithInvitee-2", payload, guard)
 	if err != nil {
 		return nil, err
 	}

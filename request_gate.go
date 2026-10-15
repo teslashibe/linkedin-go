@@ -24,9 +24,18 @@ type gatedTransport struct {
 	gate RequestGate
 }
 
+type preparedWriteGuardKey struct{}
+
 func (t *gatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err := t.gate(req.Context()); err != nil {
 		return nil, &RequestGateError{cause: err}
+	}
+	// A host gate can wait while the operation closes or its proof changes.
+	// Recheck prepared writes after that wait and before transport dispatch.
+	if guard, ok := req.Context().Value(preparedWriteGuardKey{}).(func() error); ok {
+		if err := guard(); err != nil {
+			return nil, &RequestGateError{cause: err}
+		}
 	}
 	return t.base.RoundTrip(req)
 }
