@@ -1,0 +1,12 @@
+{
+  "data": {
+    "*elements": ["urn:li:fsd_connection:ALPHA", "urn:li:fsd_connection:(SELF,BETA)"],
+    "paging": {"start": 0, "count": 2, "total": 3}
+  },
+  "included": [
+    {"entityUrn": "urn:li:fsd_connection:ALPHA", "*connectedMemberResolutionResult": "urn:li:fsd_profile:ALPHA", "createdAt": 1760000200000},
+    {"entityUrn": "urn:li:fsd_connection:(SELF,BETA)", "*connectedMember": "urn:li:fsd_profile:BETA", "createdAt": 1760000100000},
+    {"entityUrn": "urn:li:fsd_profile:ALPHA", "publicIdentifier": "alpha"},
+    {"entityUrn": "urn:li:fsd_profile:BETA", "publicIdentifier": "beta"}
+  ]
+}
