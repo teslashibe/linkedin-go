@@ -11,11 +11,14 @@ import (
 // Activity reads use the same Voyager messenger queries as the web client.
 // Query IDs rotate independently of the SDK; callers may override them with
 // reviewed values. No endpoint override is accepted.
-type ActivityQueries struct{ Conversations, Messages, ByRecipients string }
+type ActivityQueries struct{ Conversations, Messages, ByRecipients, ConversationsByCategory string }
 
 var defaultActivityQueries = ActivityQueries{
 	Conversations: "voyagerMessagingDashMessengerConversations.85aab4c1cdc6bf22aeb28edc93d5bf74",
 	Messages:      "voyagerMessagingDashMessengerMessages.073958b6fdfe5f5ceeb4d0416523317e",
+	// Category pagination uses a different operation from the initial sync
+	// snapshot. Hosts may override the reviewed operation ID when it rotates.
+	ConversationsByCategory: "messengerConversations.9501074288a12f3ae9e3c7ea243bccbf",
 }
 
 func WithActivityQueries(q ActivityQueries) Option { return func(c *Client) { c.activityQueries = q } }
@@ -42,7 +45,9 @@ type ActivityMessage struct {
 type ActivityConversationPage struct {
 	Conversations []ActivityConversation `json:"conversations"`
 	SyncToken     string                 `json:"syncToken,omitempty"`
-	// Initial sync is a bounded provider snapshot, not proof of full history.
+	NextCursor    string                 `json:"nextCursor,omitempty"`
+	// Complete applies only to the requested method's traversal. The initial
+	// snapshot never proves full history; category pagination covers INBOX only.
 	Complete bool `json:"complete"`
 }
 type ActivityMessagePage struct {

@@ -1,0 +1,113 @@
+{
+  "data": {
+    "data": {
+      "messengerMessagesByConversation": {
+        "*elements": [
+          "urn:li:msg_message:MESSAGE1",
+          "urn:li:msg_message:MESSAGE2",
+          "urn:li:msg_message:MESSAGE3",
+          "urn:li:msg_message:MESSAGE4",
+          "urn:li:msg_message:MESSAGE5",
+          "urn:li:msg_message:MESSAGE6"
+        ],
+        "metadata": {
+          "prevCursor": null
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.messenger.Conversation",
+      "entityUrn": "urn:li:msg_conversation:THREAD"
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE4",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": "synthetic-origin",
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700009672535
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE1",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": null,
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700000000000
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE5",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": "synthetic-origin",
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700009695877
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE2",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": null,
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700000046243
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE3",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": null,
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700009376597
+    },
+    {
+      "$type": "com.linkedin.messenger.Message",
+      "entityUrn": "urn:li:msg_message:MESSAGE6",
+      "*actor": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*sender": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "*conversation": "urn:li:msg_conversation:THREAD",
+      "renderContent": [],
+      "originToken": null,
+      "body": {
+        "text": "Synthetic message content"
+      },
+      "deliveredAt": 1700009726987
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofSender",
+      "hostIdentityUrn": "urn:li:fsd_profile:proofSender"
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:proofRecipient",
+      "hostIdentityUrn": "urn:li:fsd_profile:proofRecipient"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "data": {"data": {"messengerConversationsByCategoryQuery": {
+    "*elements": ["urn:li:msg_conversation:(urn:li:fsd_profile:SELF,thread)"],
+    "metadata": {"nextCursor": "next:page=(2)&x"}
+  }}},
+  "included": [
+    {
+      "entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,thread)",
+      "groupChat": false,
+      "unreadCount": 0,
+      "lastActivityAt": 1760000300000,
+      "*conversationParticipants": ["urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ALPHA"],
+      "lastMessage": {"entityUrn": "urn:li:msg_message:message", "body": {"text": "Synthetic fixture text"}}
+    },
+    {"entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "participantType": {"member": {"firstName": {"text": "Sender"}}}},
+    {"entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ALPHA", "participantType": {"member": {"firstName": {"text": "Recipient"}}}}
+  ]
+}
