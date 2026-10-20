@@ -74,9 +74,14 @@ var (
 	ErrInvitationPending         = errors.New("linkedin: invitation is already pending")
 	ErrEmailRequired             = errors.New("linkedin: recipient email is required")
 	ErrNoteUnavailable           = errors.New("linkedin: personalized invitation note is unavailable")
-	ErrEligibilityUnknown        = errors.New("linkedin: recipient eligibility unavailable")
-	ErrWriteUnknown              = errors.New("linkedin: provider write outcome is unknown; do not repeat")
-	ErrWriteRejected             = errors.New("linkedin: provider rejected write")
+	// ErrCannotResendYet is recipient-scoped: LinkedIn refuses a new invitation
+	// to this member for now, typically after a recently withdrawn invitation.
+	ErrCannotResendYet = errors.New("linkedin: recipient cannot be invited again yet")
+	// ErrInvitationLimit is account-scoped: the sender reached an invitation cap.
+	ErrInvitationLimit    = errors.New("linkedin: sender reached an invitation limit")
+	ErrEligibilityUnknown = errors.New("linkedin: recipient eligibility unavailable")
+	ErrWriteUnknown       = errors.New("linkedin: provider write outcome is unknown; do not repeat")
+	ErrWriteRejected      = errors.New("linkedin: provider rejected write")
 )
 
 // WriteError contains safe provider outcome metadata, never a response body.

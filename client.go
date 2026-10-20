@@ -525,6 +525,8 @@ func isNonRecoverable(err error) bool {
 	var denied *RequestGateError
 	return errors.As(err, &nre) || errors.As(err, &denied) ||
 		errors.Is(err, ErrNoteUnavailable) ||
+		errors.Is(err, ErrCannotResendYet) ||
+		errors.Is(err, ErrInvitationLimit) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrAccountRestricted) ||
 		errors.Is(err, ErrChallengeRequired) ||

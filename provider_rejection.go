@@ -90,13 +90,60 @@ func knownRejection(code string) (error, string) {
 		return ErrNoteUnavailable, "note_unavailable"
 	case "RECIPIENT_NOT_MESSAGEABLE", "NOT_CONNECTED", "RECIPIENT_NOT_FIRST_DEGREE_CONNECTION":
 		return ErrRecipientNotMessageable, "recipient_not_messageable"
+	// Invitation codes observed by other Voyager clients, notably Waalaxy's
+	// connect error handling: a per-recipient resend cooldown, and weekly or
+	// short-term sender caps.
+	case "CANT_RESEND_YET", "CANNOT_RESEND_YET":
+		return ErrCannotResendYet, "cannot_resend_yet"
+	case "CANT_INVITE_CONNECTION_LIMIT_REACHED", "WEEKLY_CONNECTIONS_LIMIT_REACHED", "MAX_INVITATION_SENT":
+		return ErrInvitationLimit, "invitation_limit"
 	}
 	return nil, ""
 }
 
+// providerCode retains one machine error code exactly as LinkedIn sent it.
+// Only short upper-case identifiers qualify, so free text, emails, numbers and
+// lower-case words are never retained.
+func providerCode(body []byte) string {
+	var response providerRejectionEnvelope
+	if len(body) > rejectionBodyLimit || json.Unmarshal(body, &response) != nil {
+		return ""
+	}
+	fields := []json.RawMessage{response.Code}
+	if response.Data != nil {
+		fields = append(fields, response.Data.Code)
+	}
+	fields = append(fields, response.ServiceErrorCode)
+	if response.Data != nil {
+		fields = append(fields, response.Data.ServiceErrorCode)
+	}
+	for _, raw := range fields {
+		var value string
+		if len(raw) == 0 || len(raw) > 128 || json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		if safeProviderCode(value) {
+			return value
+		}
+	}
+	return ""
+}
+
+func safeProviderCode(v string) bool {
+	if len(v) < 2 || len(v) > 64 || v[0] < 'A' || v[0] > 'Z' {
+		return false
+	}
+	for _, ch := range v {
+		if !(ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 func knownProviderReason(reason string) bool {
 	switch reason {
-	case "", "write_rejected", "rate_limited", "already_connected", "invitation_pending", "email_required", "note_unavailable", "recipient_not_messageable", "account_restricted", "challenge_required":
+	case "", "write_rejected", "rate_limited", "already_connected", "invitation_pending", "email_required", "note_unavailable", "recipient_not_messageable", "account_restricted", "challenge_required", "cannot_resend_yet", "invitation_limit":
 		return true
 	}
 	return false

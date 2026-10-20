@@ -121,7 +121,7 @@ func (c *Client) makeGuardedWriteRequest(ctx context.Context, requestURL string,
 	case http.StatusTooManyRequests:
 		cause = ErrRateLimited
 		rejection, reason, code := providerRejection(body)
-		observation.ProviderReason, observation.ServiceErrorCode = reason, code
+		observation.ProviderReason, observation.ServiceErrorCode, observation.ProviderCode = reason, code, providerCode(body)
 		if reason == "write_rejected" {
 			observation.ProviderReason = "rate_limited"
 		} else {
@@ -131,6 +131,7 @@ func (c *Client) makeGuardedWriteRequest(ctx context.Context, requestURL string,
 		cause = ErrNotFound
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusConflict, http.StatusUnprocessableEntity:
 		cause, observation.ProviderReason, observation.ServiceErrorCode = providerRejection(body)
+		observation.ProviderCode = providerCode(body)
 	}
 	c.storeResponse(observation)
 	return nil, nil, &WriteError{StatusCode: resp.StatusCode, RetryAfter: wait, Cause: cause, Observation: observation, unknownReason: writeUnknownResponseStatus}
