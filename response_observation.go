@@ -41,18 +41,19 @@ type RateLimitQuota struct {
 // request or response body, cookies, credentials, or arbitrary provider text.
 // A deadline is a provider hint, not proof that an operation will succeed then.
 type ResponseObservation struct {
-	ObservedAt       time.Time         `json:"observed_at"`
-	Method           string            `json:"method"`
-	StatusCode       int               `json:"status_code"`
-	Date             HeaderTime        `json:"date"`
-	RetryAfter       HeaderTime        `json:"retry_after"`
-	Quotas           [3]RateLimitQuota `json:"quotas"`
-	RetryAt          time.Time         `json:"retry_at,omitempty"`
-	DeadlineSource   string            `json:"deadline_source,omitempty"`
-	ProviderReason   string            `json:"provider_reason,omitempty"`
-	ServiceErrorCode string            `json:"service_error_code,omitempty"`
-	RequestID        string            `json:"request_id,omitempty"`
-	UUID             string            `json:"uuid,omitempty"`
+	Diagnostics      RejectionDiagnostics `json:"diagnostics,omitzero"`
+	ObservedAt       time.Time            `json:"observed_at"`
+	Method           string               `json:"method"`
+	StatusCode       int                  `json:"status_code"`
+	Date             HeaderTime           `json:"date"`
+	RetryAfter       HeaderTime           `json:"retry_after"`
+	Quotas           [3]RateLimitQuota    `json:"quotas"`
+	RetryAt          time.Time            `json:"retry_at,omitempty"`
+	DeadlineSource   string               `json:"deadline_source,omitempty"`
+	ProviderReason   string               `json:"provider_reason,omitempty"`
+	ServiceErrorCode string               `json:"service_error_code,omitempty"`
+	RequestID        string               `json:"request_id,omitempty"`
+	UUID             string               `json:"uuid,omitempty"`
 }
 
 var rateLimitPrefixes = [3]string{"RateLimit-", "X-RateLimit-", "X-Rate-Limit-"}
@@ -106,6 +107,10 @@ func (o ResponseObservation) Sanitized() ResponseObservation {
 	}
 	if !safeIdentifier(o.UUID, true) {
 		o.UUID = ""
+	}
+	o.Diagnostics = o.Diagnostics.sanitized()
+	if o.StatusCode != http.StatusTooManyRequests {
+		o.Diagnostics = RejectionDiagnostics{}
 	}
 	o.setDeadline()
 	return o
@@ -321,9 +326,19 @@ func (c *Client) storeResponse(o ResponseObservation) {
 }
 
 func (c *Client) rateLimitFailure(resp *http.Response) error {
+	return c.rateLimitFailureAt(resp, time.Now())
+}
+
+func (c *Client) rateLimitFailureAt(resp *http.Response, started time.Time) error {
 	o := c.LastResponse()
 	cause := error(ErrRateLimited)
-	if body, err := readResponseBodyLimit(resp, 64*1024+1); err == nil {
+	body, err := readResponseBodyLimit(resp, rejectionBodyLimit+1)
+	requestURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		requestURL = resp.Request.URL.String()
+	}
+	o.Diagnostics = rejectionDiagnostics(body, resp.Header.Get("Content-Type"), requestURL, time.Since(started), err)
+	if err == nil {
 		rejection, reason, code := providerRejection(body)
 		o.ProviderReason, o.ServiceErrorCode = reason, code
 		if reason != "write_rejected" {

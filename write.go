@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -81,6 +82,7 @@ func (c *Client) makeGuardedWriteRequest(ctx context.Context, requestURL string,
 			return nil, nil, err
 		}
 	}
+	started := time.Now()
 	resp, err := hc.Do(req)
 	if err != nil {
 		var denied *RequestGateError
@@ -92,7 +94,13 @@ func (c *Client) makeGuardedWriteRequest(ctx context.Context, requestURL string,
 	defer resp.Body.Close()
 	c.absorbSetCookies(resp)
 	observation := c.observeResponse(http.MethodPost, resp)
-	body, err := readResponseBody(resp)
+	var body []byte
+	if resp.StatusCode == http.StatusTooManyRequests {
+		body, err = readResponseBodyLimit(resp, rejectionBodyLimit+1)
+		observation.Diagnostics = rejectionDiagnostics(body, resp.Header.Get("Content-Type"), requestURL, time.Since(started), err)
+	} else {
+		body, err = readResponseBody(resp)
+	}
 	if err != nil {
 		return nil, nil, &WriteError{StatusCode: resp.StatusCode, Cause: ErrWriteUnknown, Observation: observation, unknownReason: writeUnknownResponseBody}
 	}

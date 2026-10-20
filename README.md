@@ -211,3 +211,14 @@ A coverage test in `mcp/mcp_test.go` fails if a new exported method is added to 
 ## License
 
 MIT
+
+### Rate-limit diagnostics
+
+A received HTTP 429 carries bounded `ResponseObservation.Diagnostics`: version,
+response format, observed body byte count and truncation, parser outcome, code
+field types, a fixed endpoint category, and request duration. The SDK retains
+known provider reasons, numeric service codes and validated request IDs alongside
+these fields. Unknown strings, URLs, cookies, request text and response bodies
+are not retained. A generic rate limit does not establish a weekly invitation or
+personalized-note quota. Diagnostic parsing does not change dispatch, retry,
+cooldown or uncertain-write handling.

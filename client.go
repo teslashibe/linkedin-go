@@ -89,6 +89,7 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 		req.Header.Set(k, v)
 	}
 
+	started := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, requestTransportError(err)
@@ -97,6 +98,9 @@ func (c *Client) doRequest(ctx context.Context, requestURL string) ([]byte, erro
 
 	c.absorbSetCookies(resp)
 	c.observeResponse(http.MethodGet, resp)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, c.rateLimitFailureAt(resp, started)
+	}
 
 	if err := c.classifyResponse(resp, requestURL); err != nil {
 		return nil, err
@@ -145,6 +149,7 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 	req.Header.Set("sec-fetch-mode", "cors")
 	req.Header.Set("sec-fetch-site", "same-origin")
 
+	started := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, requestTransportError(err)
@@ -153,6 +158,9 @@ func (c *Client) doPublicGet(ctx context.Context, requestURL string) ([]byte, er
 
 	c.absorbSetCookies(resp)
 	c.observeResponse(http.MethodGet, resp)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, c.rateLimitFailureAt(resp, started)
+	}
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
@@ -451,6 +459,7 @@ func (c *Client) warmUp(ctx context.Context) error {
 	req.Header.Set("sec-fetch-user", "?1")
 	req.Header.Set("upgrade-insecure-requests", "1")
 
+	started := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return wrapWarmUpTransportErr(err)
@@ -459,7 +468,7 @@ func (c *Client) warmUp(ctx context.Context) error {
 	c.absorbSetCookies(resp)
 	c.observeResponse(http.MethodGet, resp)
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return c.rateLimitFailure(resp)
+		return c.rateLimitFailureAt(resp, started)
 	}
 
 	body, err := readResponseBodyLimit(resp, 64*1024)

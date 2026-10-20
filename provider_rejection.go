@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+type providerRejectionEnvelope struct {
+	Code             json.RawMessage `json:"code"`
+	ServiceErrorCode json.RawMessage `json:"serviceErrorCode"`
+	Data             *struct {
+		Code             json.RawMessage `json:"code"`
+		ServiceErrorCode json.RawMessage `json:"serviceErrorCode"`
+	} `json:"data"`
+}
+
 // providerRejection never returns arbitrary provider strings. Numeric service
 // codes are retained for correlation, without assigning undocumented meaning.
 func providerRejection(body []byte) (error, string, string) {
@@ -15,14 +24,7 @@ func providerRejection(body []byte) (error, string, string) {
 		}
 		return err, "account_restricted", ""
 	}
-	var response struct {
-		Code             json.RawMessage `json:"code"`
-		ServiceErrorCode json.RawMessage `json:"serviceErrorCode"`
-		Data             *struct {
-			Code             json.RawMessage `json:"code"`
-			ServiceErrorCode json.RawMessage `json:"serviceErrorCode"`
-		} `json:"data"`
-	}
+	var response providerRejectionEnvelope
 	if len(body) > 64*1024 || json.Unmarshal(body, &response) != nil {
 		return ErrWriteRejected, "write_rejected", ""
 	}
