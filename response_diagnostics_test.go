@@ -51,6 +51,18 @@ func TestRateLimitDiagnosticOutcomes(t *testing.T) {
 				if d != o.Sanitized().Diagnostics {
 					t.Fatalf("diagnostic lost to sanitizer: %+v", d)
 				}
+				// A short upper-case machine code is retained on purpose so an
+				// unrecognized rejection can still be diagnosed; nothing else is.
+				wantCode := ""
+				if tc.name == "unknown code" {
+					wantCode = "PRIVATE_CODE"
+				} else if tc.name == "known code" || tc.name == "conflicting" {
+					wantCode = "NOTE_UNAVAILABLE"
+				}
+				if o.ProviderCode != wantCode {
+					t.Fatalf("provider code=%q want %q", o.ProviderCode, wantCode)
+				}
+				o.ProviderCode = ""
 				raw, _ := json.Marshal(o)
 				for _, secret := range []string{"private.name", "private response", "PRIVATE_CODE", "private-query", "payload"} {
 					if strings.Contains(string(raw), secret) {

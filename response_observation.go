@@ -39,6 +39,8 @@ type RateLimitQuota struct {
 
 // ResponseObservation is bounded, safe response metadata. It contains no URL,
 // request or response body, cookies, credentials, or arbitrary provider text.
+// ProviderCode is the one exception: a short upper-case machine error code from
+// a rejected response, retained so unrecognized codes can still be diagnosed.
 // A deadline is a provider hint, not proof that an operation will succeed then.
 type ResponseObservation struct {
 	Diagnostics      RejectionDiagnostics `json:"diagnostics,omitzero"`
@@ -52,6 +54,7 @@ type ResponseObservation struct {
 	DeadlineSource   string               `json:"deadline_source,omitempty"`
 	ProviderReason   string               `json:"provider_reason,omitempty"`
 	ServiceErrorCode string               `json:"service_error_code,omitempty"`
+	ProviderCode     string               `json:"provider_code,omitempty"`
 	RequestID        string               `json:"request_id,omitempty"`
 	UUID             string               `json:"uuid,omitempty"`
 }
@@ -101,6 +104,9 @@ func (o ResponseObservation) Sanitized() ResponseObservation {
 	}
 	if !digits(o.ServiceErrorCode) || len(o.ServiceErrorCode) > 20 {
 		o.ServiceErrorCode = ""
+	}
+	if !safeProviderCode(o.ProviderCode) || o.StatusCode < 400 {
+		o.ProviderCode = ""
 	}
 	if !safeIdentifier(o.RequestID, false) {
 		o.RequestID = ""
@@ -340,7 +346,7 @@ func (c *Client) rateLimitFailureAt(resp *http.Response, started time.Time) erro
 	o.Diagnostics = rejectionDiagnostics(body, resp.Header.Get("Content-Type"), requestURL, time.Since(started), err)
 	if err == nil {
 		rejection, reason, code := providerRejection(body)
-		o.ProviderReason, o.ServiceErrorCode = reason, code
+		o.ProviderReason, o.ServiceErrorCode, o.ProviderCode = reason, code, providerCode(body)
 		if reason != "write_rejected" {
 			cause = errors.Join(ErrRateLimited, rejection)
 		}
