@@ -842,3 +842,60 @@ func TestProfileOptionalEducationCompany404IsBoundToExactMember(t *testing.T) {
 		})
 	}
 }
+
+// Notes up to InvitationNoteLimit (300 UTF-16 units, paid accounts) go out
+// exactly; one unit more fails before any request, on both invitation paths.
+func TestOutreachInvitationNoteLimit(t *testing.T) {
+	if BasicInvitationNoteLimit != 200 || InvitationNoteLimit != 300 {
+		t.Fatalf("limits basic=%d paid=%d", BasicInvitationNoteLimit, InvitationNoteLimit)
+	}
+	for _, prepared := range []bool{false, true} {
+		for _, tc := range []struct {
+			note string
+			ok   bool
+		}{
+			{strings.Repeat("a", 200), true},
+			{strings.Repeat("a", 201), true},
+			{strings.Repeat("a", 299) + " ", true},
+			{strings.Repeat("😀", 150), true},
+			{strings.Repeat("a", 301), false},
+			{strings.Repeat("a", 299) + "😀", false},
+		} {
+			var requests, writes atomic.Int32
+			c := offlineClient(func(req *http.Request) (*http.Response, error) {
+				requests.Add(1)
+				if req.Method != http.MethodPost {
+					return fixtureRead(req, 2), nil
+				}
+				writes.Add(1)
+				var payload map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil || payload["customMessage"] != tc.note {
+					t.Fatalf("changed note err=%v", err)
+				}
+				return response(req, 201, `{"data":{"value":{"invitationUrn":"urn:li:fsd_invitation:INVITATION"}}}`), nil
+			})
+			var err error
+			if prepared {
+				op, openErr := c.OpenOutreach(context.Background(), "urn:li:fsd_profile:SELF")
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				requests.Store(0)
+				var h *PreparedInvitation
+				if h, err = op.PrepareInvitation(context.Background(), InvitationParams{RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: tc.note}); err == nil {
+					_, err = h.Send(context.Background())
+				}
+				op.Close()
+			} else {
+				_, err = c.SendConnectionInvitation(context.Background(), InvitationParams{RecipientURN: "urn:li:fsd_profile:RECIPIENT", RecipientProfileURL: "https://www.linkedin.com/in/recipient", ExpectedSenderURN: "urn:li:fsd_profile:SELF", Note: tc.note})
+			}
+			units := UTF16Length(tc.note)
+			if tc.ok && (err != nil || writes.Load() != 1) {
+				t.Fatalf("prepared=%v units=%d writes=%d err=%v", prepared, units, writes.Load(), err)
+			}
+			if !tc.ok && (!errors.Is(err, ErrInvalidParams) || requests.Load() != 0) {
+				t.Fatalf("prepared=%v units=%d requests=%d err=%v", prepared, units, requests.Load(), err)
+			}
+		}
+	}
+}

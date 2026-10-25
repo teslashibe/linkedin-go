@@ -8,10 +8,15 @@ import (
 )
 
 // These conservative application limits are not claims about LinkedIn's maximums.
+// InvitationNoteLimit is the note length LinkedIn allows paid accounts (Premium,
+// Sales Navigator, Recruiter); free accounts get BasicInvitationNoteLimit. The SDK
+// cannot tell a sender's plan, so callers that cannot either should hold notes to
+// BasicInvitationNoteLimit.
 const (
-	MessageLimit        = 1000
-	CommentLimit        = 1000
-	InvitationNoteLimit = 200
+	MessageLimit             = 1000
+	CommentLimit             = 1000
+	InvitationNoteLimit      = 300
+	BasicInvitationNoteLimit = 200
 )
 
 // UTF16Length counts browser-style text units without changing the text.

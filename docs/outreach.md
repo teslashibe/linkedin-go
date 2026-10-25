@@ -87,8 +87,10 @@ absent; `x-li-track` is omitted for a partial profile. Supply captured values wi
 | Connection invitation with note | `SendConnectionInvitation` | Exact recipient, explicit no-connection/no-invitation evidence, verified sender | Invitation URN from the creation acknowledgement |
 
 DMs and comments use a conservative application cap of 1,000 UTF-16 code units;
-invitation notes use 200. These caps do not claim LinkedIn's undocumented transport
-maximums or a particular account entitlement. Blank or invalid UTF-8 text fails
+invitation notes use 300, the length LinkedIn allows paid accounts. Free accounts
+get 200 (`BasicInvitationNoteLimit`); the SDK does not read the sender's plan, so
+callers that cannot tell it should hold notes to 200. These caps do not claim
+LinkedIn's undocumented transport maximums or a particular account entitlement. Blank or invalid UTF-8 text fails
 validation. Accepted text retains its whitespace and Unicode exactly; the SDK
 does not trim, normalize, truncate, personalize, or add mentions.
 
