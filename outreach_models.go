@@ -3,6 +3,7 @@ package linkedin
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"unicode/utf16"
 )
@@ -123,6 +124,12 @@ const (
 	commentReceiptAliasMismatch     = "alias_mismatch"
 	commentReceiptIDMissing         = "id_missing"
 	commentReceiptDetailUnsupported = "detail_unsupported"
+	identityMismatchMailbox         = "mailbox"
+	identityMismatchSender          = "sender"
+	identityMismatchSenderRef       = "sender_ref"
+	identityMismatchActor           = "actor"
+	identityMismatchRecipient       = "recipient"
+	identityMismatchHostRecipients  = "host_recipients"
 )
 
 // WriteUnknownReason returns a bounded diagnostic code for an uncertain write,
@@ -144,20 +151,26 @@ func WriteUnknownReason(err error) string {
 	return "unclassified"
 }
 
-// WriteUnknownDetail refines the comment_receipt reason with a fixed enum. It
-// never exposes provider content and does not change the uncertain outcome.
+// WriteUnknownDetail refines the comment_receipt and identity_mismatch reasons
+// with a fixed enum. It never exposes provider content and does not change the
+// uncertain outcome.
 func WriteUnknownDetail(err error) string {
-	if WriteUnknownReason(err) != writeUnknownCommentReceipt {
+	var details []string
+	switch WriteUnknownReason(err) {
+	case writeUnknownCommentReceipt:
+		details = []string{commentReceiptIDType, commentReceiptIDInvalid, commentReceiptPostMismatch,
+			commentReceiptExistingParent, commentReceiptAliasMismatch, commentReceiptIDMissing,
+			commentReceiptDetailUnsupported}
+	case writeUnknownIdentityMismatch:
+		// Comment and invitation identity checks carry no field detail.
+		details = []string{"", identityMismatchMailbox, identityMismatchSender, identityMismatchSenderRef,
+			identityMismatchActor, identityMismatchRecipient, identityMismatchHostRecipients}
+	default:
 		return ""
 	}
 	var outcome *WriteError
-	if errors.As(err, &outcome) {
-		switch outcome.unknownDetail {
-		case commentReceiptIDType, commentReceiptIDInvalid, commentReceiptPostMismatch,
-			commentReceiptExistingParent, commentReceiptAliasMismatch, commentReceiptIDMissing,
-			commentReceiptDetailUnsupported:
-			return outcome.unknownDetail
-		}
+	if errors.As(err, &outcome) && slices.Contains(details, outcome.unknownDetail) {
+		return outcome.unknownDetail
 	}
 	return "unclassified"
 }

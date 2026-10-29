@@ -149,6 +149,16 @@ must agree within their own family, including viewer ownership when encoded.
 When the creation object includes text, sender, recipient, or parent evidence,
 it must agree with the approved request.
 
+The live `createMessage` 200 value echoes the sender as
+`urn:li:msg_messagingParticipant:` wrapping the profile URN. Every mailbox,
+sender and recipient echo is compared as a member after that wrapper is removed;
+one that still fails to parse or names another member stays unknown. The DM
+receipt always carries the viewer-owned `urn:li:msg_message:` and
+`urn:li:msg_conversation:` entity URNs that inbox reads return. Every alias
+present must carry the same ID, and a value with only `backendUrn` or
+`backendConversationUrn` gets its entity URN built from the verified sender and
+that ID.
+
 Comment creation may acknowledge through headers when its body is empty, `{}`,
 or exactly `{"data":{}}`. Unsupported, malformed, errored, or unresolved body
 evidence cannot be bypassed by a header. Receipt headers accept a full canonical
@@ -215,8 +225,11 @@ row into a success.
 
 `WriteUnknownDetail` refines `comment_receipt` with `id_type`, `id_invalid`,
 `post_mismatch`, `existing_parent`, `alias_mismatch`, `id_missing`, or
-`detail_unsupported`. An unrecognized comment-receipt detail returns
-`unclassified`; definite outcomes and other reason classes return an empty string.
+`detail_unsupported`. For a DM it refines `identity_mismatch` with the first echo
+that failed: `mailbox`, `sender`, `sender_ref`, `actor`, `recipient`, or
+`host_recipients`; comment and invitation identity mismatches carry no detail.
+An unrecognized detail returns `unclassified`; definite outcomes and other reason
+classes return an empty string.
 These fixed enums carry no native IDs, response text, or credentials.
 
 ## Pinned protocol evidence
