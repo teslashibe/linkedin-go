@@ -149,6 +149,13 @@ must agree within their own family, including viewer ownership when encoded.
 When the creation object includes text, sender, recipient, or parent evidence,
 it must agree with the approved request.
 
+The live `createMessage` 200 value echoes the sender as
+`urn:li:msg_messagingParticipant:` wrapping the profile URN. Every mailbox,
+sender and recipient echo is compared as a member after that wrapper is removed;
+one that still fails to parse or names another member stays unknown. The DM
+receipt keeps the `urn:li:msg_message:` entity URN that inbox reads return;
+`backendUrn` must carry the same ID.
+
 Comment creation may acknowledge through headers when its body is empty, `{}`,
 or exactly `{"data":{}}`. Unsupported, malformed, errored, or unresolved body
 evidence cannot be bypassed by a header. Receipt headers accept a full canonical

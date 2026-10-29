@@ -514,9 +514,9 @@ func TestOutreachMessagingReceiptAliases(t *testing.T) {
 		{map[string]any{"entityUrn": "urn:li:msg_message:()"}, false},
 		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:SELF,)"}, false},
 	} {
-		_, good := selectMessagingReceipt(tc.value, []string{"backendUrn", "entityUrn"}, "urn:li:fsd_profile:SELF", "urn:li:msg_message:", "urn:li:messagingMessage:")
-		if good != tc.good {
-			t.Fatalf("value=%+v good=%v", tc.value, good)
+		urn, good := selectMessagingReceipt(tc.value, []string{"entityUrn", "backendUrn"}, "urn:li:fsd_profile:SELF", "urn:li:msg_message:", "urn:li:messagingMessage:")
+		if good != tc.good || good && urn != tc.value["entityUrn"] {
+			t.Fatalf("value=%+v urn=%q good=%v", tc.value, urn, good)
 		}
 	}
 }
@@ -525,7 +525,7 @@ func TestOutreachMissingOrConflictingAcknowledgmentIsUnknown(t *testing.T) {
 	for _, body := range []string{
 		`{}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","body":{"text":""}}}`,
-		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","senderUrn":"urn:li:fsd_profile:OTHER"}}`,
+		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","senderUrn":"urn:li:msg_messagingParticipant:urn:li:fsd_profile:OTHER"}}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:OTHER,2-conversation==)"}}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","*conversation":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","*sender":"urn:li:msg_messagingParticipant:urn:li:fsd_profile:OTHER"}}`,
 	} {

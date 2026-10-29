@@ -63,7 +63,7 @@ func (c *Client) sendDirectMessage(ctx context.Context, p DirectMessageParams, r
 	if err != nil {
 		return nil, unknownReceiptReason(writeUnknownCreationValue)
 	}
-	message, messageOK := selectMessagingReceipt(value, []string{"backendUrn", "entityUrn"}, sender, "urn:li:msg_message:", "urn:li:messagingMessage:")
+	message, messageOK := selectMessagingReceipt(value, []string{"entityUrn", "backendUrn"}, sender, "urn:li:msg_message:", "urn:li:messagingMessage:")
 	conversation, conversationOK := selectMessagingReceipt(value, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, sender, "urn:li:msg_conversation:", "urn:li:messagingThread:")
 	if !messageOK {
 		return nil, unknownReceiptReason(writeUnknownMessageReceipt)
@@ -71,35 +71,42 @@ func (c *Client) sendDirectMessage(ctx context.Context, p DirectMessageParams, r
 	if !conversationOK {
 		return nil, unknownReceiptReason(writeUnknownConversationReceipt)
 	}
-	for key, expected := range map[string]string{"originToken": origin, "mailboxUrn": sender, "senderUrn": sender, "recipientUrn": recipient} {
-		if observed, exists := value[key]; exists && observed != expected {
-			reason := writeUnknownIdentityMismatch
-			if key == "originToken" {
-				reason = writeUnknownRequestMismatch
-			}
-			return nil, unknownReceiptReason(reason)
-		}
+	if observed, exists := value["originToken"]; exists && observed != origin {
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
 	}
-	for _, key := range []string{"*sender", "*actor"} {
-		if observed, exists := value[key]; exists {
-			raw, ok := observed.(string)
-			raw = strings.TrimPrefix(raw, "urn:li:msg_messagingParticipant:")
-			member, err := CanonicalMemberURN(raw)
-			if !ok || err != nil || member != sender {
-				return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
-			}
-		}
-	}
-	if observed, exists := value["hostRecipientUrns"]; exists {
-		recipients, ok := observed.([]any)
-		if !ok || len(recipients) != 1 || recipients[0] != recipient {
-			return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
-		}
+	if !messageParticipantsMatch(value, sender, recipient) {
+		return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
 	}
 	if observed, exists := value["body"]; exists && valueText(observed) != p.Body {
 		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
 	}
 	return &MessageReceipt{MessageURN: message, ConversationURN: conversation}, nil
+}
+
+// messageParticipantsMatch accepts the approved sender and recipient as profile
+// URNs or as the messaging-participant URNs that wrap them. A present identity
+// that does not parse, or names another member, fails closed.
+func messageParticipantsMatch(value map[string]any, sender, recipient string) bool {
+	matches := func(observed any, member string) bool {
+		raw, ok := observed.(string)
+		canonical, err := CanonicalMemberURN(strings.TrimPrefix(raw, "urn:li:msg_messagingParticipant:"))
+		return ok && err == nil && canonical == member
+	}
+	for _, key := range []string{"mailboxUrn", "senderUrn", "*sender", "*actor"} {
+		if observed, exists := value[key]; exists && !matches(observed, sender) {
+			return false
+		}
+	}
+	if observed, exists := value["recipientUrn"]; exists && !matches(observed, recipient) {
+		return false
+	}
+	if observed, exists := value["hostRecipientUrns"]; exists {
+		recipients, ok := observed.([]any)
+		if !ok || len(recipients) != 1 || !matches(recipients[0], recipient) {
+			return false
+		}
+	}
+	return true
 }
 
 func messageToken() (string, string, error) {
