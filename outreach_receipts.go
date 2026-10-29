@@ -148,8 +148,12 @@ func receiptMember(raw string) string {
 	return member
 }
 
+// selectMessagingReceipt returns the receipt in the viewer-owned entity form
+// (the first prefix) that inbox reads return. Every present alias must be well
+// formed, owned by the viewer when encoded, and carry the same ID, so a
+// backend-only acknowledgment yields the same receipt as its entity URN.
 func selectMessagingReceipt(value map[string]any, keys []string, viewer string, prefixes ...string) (string, bool) {
-	selected, selectedID := "", ""
+	selectedID := ""
 	for _, key := range keys {
 		observed, exists := value[key]
 		if !exists {
@@ -169,9 +173,10 @@ func selectMessagingReceipt(value map[string]any, keys []string, viewer string, 
 		if selectedID != "" && selectedID != id {
 			return "", false
 		}
-		if selected == "" {
-			selected, selectedID = urn, id
-		}
+		selectedID = id
 	}
-	return selected, selected != ""
+	if selectedID == "" {
+		return "", false
+	}
+	return prefixes[0] + "(" + viewer + "," + selectedID + ")", true
 }

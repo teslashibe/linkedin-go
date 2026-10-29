@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -504,19 +505,43 @@ func TestOutreachExactTextAndSingleWrite(t *testing.T) {
 }
 
 func TestOutreachMessagingReceiptAliases(t *testing.T) {
+	const entity = "urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)"
 	for _, tc := range []struct {
 		value map[string]any
-		good  bool
+		want  string
 	}{
-		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)", "backendUrn": "urn:li:messagingMessage:2-message=="}, true},
-		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:OTHER,2-message==)", "backendUrn": "urn:li:messagingMessage:2-message=="}, false},
-		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)", "backendUrn": "urn:li:messagingMessage:DIFFERENT"}, false},
-		{map[string]any{"entityUrn": "urn:li:msg_message:()"}, false},
-		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:SELF,)"}, false},
+		{map[string]any{"entityUrn": entity, "backendUrn": "urn:li:messagingMessage:2-message=="}, entity},
+		{map[string]any{"backendUrn": "urn:li:messagingMessage:2-message=="}, entity},
+		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fs_miniProfile:SELF,2-message==)"}, entity},
+		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:OTHER,2-message==)", "backendUrn": "urn:li:messagingMessage:2-message=="}, ""},
+		{map[string]any{"entityUrn": entity, "backendUrn": "urn:li:messagingMessage:DIFFERENT"}, ""},
+		{map[string]any{"entityUrn": "urn:li:msg_message:()"}, ""},
+		{map[string]any{"entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:SELF,)"}, ""},
 	} {
 		urn, good := selectMessagingReceipt(tc.value, []string{"entityUrn", "backendUrn"}, "urn:li:fsd_profile:SELF", "urn:li:msg_message:", "urn:li:messagingMessage:")
-		if good != tc.good || good && urn != tc.value["entityUrn"] {
+		if good != (tc.want != "") || urn != tc.want {
 			t.Fatalf("value=%+v urn=%q good=%v", tc.value, urn, good)
+		}
+	}
+	conversation, good := selectMessagingReceipt(map[string]any{"backendConversationUrn": "urn:li:messagingThread:2-conversation=="}, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, "urn:li:fsd_profile:SELF", "urn:li:msg_conversation:", "urn:li:messagingThread:")
+	if !good || conversation != "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)" {
+		t.Fatalf("conversation=%q good=%v", conversation, good)
+	}
+}
+
+func TestOutreachIdentityMismatchDetailIsBounded(t *testing.T) {
+	for _, detail := range []string{identityMismatchMailbox, identityMismatchSender, identityMismatchSenderRef, identityMismatchActor, identityMismatchRecipient, identityMismatchHostRecipients} {
+		err := fmt.Errorf("host wrapper: %w", &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownIdentityMismatch, unknownDetail: detail})
+		if WriteUnknownReason(err) != "identity_mismatch" || WriteUnknownDetail(err) != detail {
+			t.Fatal("safe wrapped identity detail lost")
+		}
+	}
+	if WriteUnknownDetail(unknownReceiptReason(writeUnknownIdentityMismatch)) != "" {
+		t.Fatal("comment and invitation identity checks gained a detail")
+	}
+	for _, err := range []error{unknownCommentReceipt(identityMismatchSender), &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownIdentityMismatch, unknownDetail: commentReceiptIDInvalid}} {
+		if WriteUnknownDetail(err) != "unclassified" {
+			t.Fatal("detail crossed reason classes")
 		}
 	}
 }
@@ -525,6 +550,7 @@ func TestOutreachMissingOrConflictingAcknowledgmentIsUnknown(t *testing.T) {
 	for _, body := range []string{
 		`{}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","body":{"text":""}}}`,
+		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","senderUrn":"urn:li:fsd_profile:OTHER"}}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","senderUrn":"urn:li:msg_messagingParticipant:urn:li:fsd_profile:OTHER"}}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","conversationUrn":"urn:li:msg_conversation:(urn:li:fsd_profile:OTHER,2-conversation==)"}}`,
 		`{"data":{"entityUrn":"urn:li:msg_message:(urn:li:fsd_profile:SELF,2-message==)","*conversation":"urn:li:msg_conversation:(urn:li:fsd_profile:SELF,2-conversation==)","*sender":"urn:li:msg_messagingParticipant:urn:li:fsd_profile:OTHER"}}`,

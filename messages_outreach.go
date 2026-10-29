@@ -74,8 +74,8 @@ func (c *Client) sendDirectMessage(ctx context.Context, p DirectMessageParams, r
 	if observed, exists := value["originToken"]; exists && observed != origin {
 		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
 	}
-	if !messageParticipantsMatch(value, sender, recipient) {
-		return nil, unknownReceiptReason(writeUnknownIdentityMismatch)
+	if detail := messageIdentityMismatch(value, sender, recipient); detail != "" {
+		return nil, &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownIdentityMismatch, unknownDetail: detail}
 	}
 	if observed, exists := value["body"]; exists && valueText(observed) != p.Body {
 		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
@@ -83,30 +83,34 @@ func (c *Client) sendDirectMessage(ctx context.Context, p DirectMessageParams, r
 	return &MessageReceipt{MessageURN: message, ConversationURN: conversation}, nil
 }
 
-// messageParticipantsMatch accepts the approved sender and recipient as profile
-// URNs or as the messaging-participant URNs that wrap them. A present identity
-// that does not parse, or names another member, fails closed.
-func messageParticipantsMatch(value map[string]any, sender, recipient string) bool {
+// messageIdentityMismatch names the first identity echo that is not the
+// approved sender or recipient, as a profile URN or the messaging-participant
+// URN that wraps it. A present identity that does not parse, or names another
+// member, fails closed.
+func messageIdentityMismatch(value map[string]any, sender, recipient string) string {
 	matches := func(observed any, member string) bool {
 		raw, ok := observed.(string)
 		canonical, err := CanonicalMemberURN(strings.TrimPrefix(raw, "urn:li:msg_messagingParticipant:"))
 		return ok && err == nil && canonical == member
 	}
-	for _, key := range []string{"mailboxUrn", "senderUrn", "*sender", "*actor"} {
-		if observed, exists := value[key]; exists && !matches(observed, sender) {
-			return false
+	for _, field := range []struct{ key, member, detail string }{
+		{"mailboxUrn", sender, identityMismatchMailbox},
+		{"senderUrn", sender, identityMismatchSender},
+		{"*sender", sender, identityMismatchSenderRef},
+		{"*actor", sender, identityMismatchActor},
+		{"recipientUrn", recipient, identityMismatchRecipient},
+	} {
+		if observed, exists := value[field.key]; exists && !matches(observed, field.member) {
+			return field.detail
 		}
-	}
-	if observed, exists := value["recipientUrn"]; exists && !matches(observed, recipient) {
-		return false
 	}
 	if observed, exists := value["hostRecipientUrns"]; exists {
 		recipients, ok := observed.([]any)
 		if !ok || len(recipients) != 1 || !matches(recipients[0], recipient) {
-			return false
+			return identityMismatchHostRecipients
 		}
 	}
-	return true
+	return ""
 }
 
 func messageToken() (string, string, error) {

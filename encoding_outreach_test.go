@@ -135,27 +135,38 @@ func TestOutreachGzipAcknowledgmentSingleDispatch(t *testing.T) {
 }
 
 // Both DM send paths must confirm LinkedIn's own receipt shape and keep the
-// entity URNs that inbox reads return.
+// entity URNs that inbox reads return. Wrong-member echoes are checked in both
+// the plain profile form and the messaging-participant form.
 func TestOutreachCreateMessageReceipt(t *testing.T) {
-	const other = "urn:li:msg_messagingParticipant:urn:li:fsd_profile:OTHER"
+	const otherProfile = "urn:li:fsd_profile:OTHER"
+	const other = "urn:li:msg_messagingParticipant:" + otherProfile
 	for _, tc := range []struct {
-		name, reason string
-		mutate       func(map[string]any)
+		name, reason, detail string
+		mutate               func(map[string]any)
 	}{
 		{name: "confirmed"},
 		{name: "profile_sender", mutate: func(value map[string]any) { value["senderUrn"] = "urn:li:fsd_profile:SELF" }},
 		{name: "participant_recipient", mutate: func(value map[string]any) {
 			value["hostRecipientUrns"] = []any{"urn:li:msg_messagingParticipant:urn:li:fsd_profile:RECIPIENT"}
 		}},
-		{name: "other_sender", reason: "identity_mismatch", mutate: func(value map[string]any) { value["senderUrn"] = other }},
-		{name: "other_sender_reference", reason: "identity_mismatch", mutate: func(value map[string]any) { value["*sender"] = other }},
-		{name: "unparseable_sender", reason: "identity_mismatch", mutate: func(value map[string]any) {
+		{name: "backend_message_only", mutate: func(value map[string]any) { delete(value, "entityUrn") }},
+		{name: "backend_conversation_only", mutate: func(value map[string]any) { delete(value, "conversationUrn") }},
+		{name: "other_mailbox", reason: "identity_mismatch", detail: "mailbox", mutate: func(value map[string]any) { value["mailboxUrn"] = other }},
+		{name: "other_profile_mailbox", reason: "identity_mismatch", detail: "mailbox", mutate: func(value map[string]any) { value["mailboxUrn"] = otherProfile }},
+		{name: "other_sender", reason: "identity_mismatch", detail: "sender", mutate: func(value map[string]any) { value["senderUrn"] = other }},
+		{name: "other_profile_sender", reason: "identity_mismatch", detail: "sender", mutate: func(value map[string]any) { value["senderUrn"] = otherProfile }},
+		{name: "unparseable_sender", reason: "identity_mismatch", detail: "sender", mutate: func(value map[string]any) {
 			value["senderUrn"] = "urn:li:msg_messagingParticipant:urn:li:fsd_company:1"
 		}},
-		{name: "other_mailbox", reason: "identity_mismatch", mutate: func(value map[string]any) { value["mailboxUrn"] = other }},
-		{name: "other_recipient", reason: "identity_mismatch", mutate: func(value map[string]any) { value["recipientUrn"] = other }},
-		{name: "other_host_recipient", reason: "identity_mismatch", mutate: func(value map[string]any) { value["hostRecipientUrns"] = []any{other} }},
-		{name: "extra_host_recipient", reason: "identity_mismatch", mutate: func(value map[string]any) {
+		{name: "other_sender_reference", reason: "identity_mismatch", detail: "sender_ref", mutate: func(value map[string]any) { value["*sender"] = other }},
+		{name: "other_actor", reason: "identity_mismatch", detail: "actor", mutate: func(value map[string]any) { value["*actor"] = otherProfile }},
+		{name: "other_recipient", reason: "identity_mismatch", detail: "recipient", mutate: func(value map[string]any) { value["recipientUrn"] = other }},
+		{name: "other_profile_recipient", reason: "identity_mismatch", detail: "recipient", mutate: func(value map[string]any) { value["recipientUrn"] = otherProfile }},
+		{name: "other_host_recipient", reason: "identity_mismatch", detail: "host_recipients", mutate: func(value map[string]any) { value["hostRecipientUrns"] = []any{other} }},
+		{name: "other_profile_host_recipient", reason: "identity_mismatch", detail: "host_recipients", mutate: func(value map[string]any) {
+			value["hostRecipientUrns"] = []any{otherProfile}
+		}},
+		{name: "extra_host_recipient", reason: "identity_mismatch", detail: "host_recipients", mutate: func(value map[string]any) {
 			value["hostRecipientUrns"] = []any{"urn:li:fsd_profile:RECIPIENT", other}
 		}},
 		{name: "backend_id_conflict", reason: "message_receipt", mutate: func(value map[string]any) { value["backendUrn"] = "urn:li:messagingMessage:2-other==" }},
@@ -218,8 +229,8 @@ func TestOutreachCreateMessageReceipt(t *testing.T) {
 					if err != nil || receipt == nil || receipt.MessageURN != createdMessageURN || receipt.ConversationURN != createdConversationURN {
 						t.Fatalf("receipt=%+v err=%v", receipt, err)
 					}
-				} else if receipt != nil || !IsWriteUnknown(err) || WriteUnknownReason(err) != tc.reason {
-					t.Fatalf("receipt=%+v reason=%q err=%v", receipt, WriteUnknownReason(err), err)
+				} else if receipt != nil || !IsWriteUnknown(err) || WriteUnknownReason(err) != tc.reason || WriteUnknownDetail(err) != tc.detail {
+					t.Fatalf("receipt=%+v reason=%q detail=%q err=%v", receipt, WriteUnknownReason(err), WriteUnknownDetail(err), err)
 				}
 			})
 		}
