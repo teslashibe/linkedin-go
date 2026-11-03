@@ -3,9 +3,16 @@ package linkedin
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+)
+
+const (
+	maxSkippedKinds    = 8
+	unknownSkippedKind = "unknown"
 )
 
 // ActivityConversationListParams traverses the provider's INBOX category.
@@ -22,6 +29,8 @@ type ActivityConversationListParams struct {
 // Only metadata is returned: fetch changed tracked threads with
 // GetActivityMessages after applying the host's authorization and recipient
 // filters. Existing GetActivityConversations retains its snapshot contract.
+// A conversation with a non-member participant is left out and counted in
+// Skipped; a non-empty page of nothing else fails with ErrIdentityUnavailable.
 func (c *Client) ListActivityConversations(ctx context.Context, expectedSender string, p ActivityConversationListParams) (*ActivityConversationPage, error) {
 	if err := c.activitySender(expectedSender); err != nil {
 		return nil, err
@@ -182,6 +191,7 @@ func parseActivityConversationList(node []byte, sender string, p ActivityConvers
 		return nil, ErrParseFailed
 	}
 	seen := map[string]bool{}
+	kinds := map[string]bool{}
 	for _, r := range *raw.Elements {
 		if !validActivityURN(r.URN, "msg_conversation") || seen[r.URN] || r.LastActivityAt <= 0 || r.Participants == nil {
 			return nil, ErrParseFailed
@@ -189,39 +199,74 @@ func parseActivityConversationList(node []byte, sender string, p ActivityConvers
 		seen[r.URN] = true
 		conv := ActivityConversation{URN: r.URN, Group: r.Group, LastActivityAt: r.LastActivityAt, Participants: []string{}, Messages: []ActivityMessage{}}
 		participants := map[string]bool{}
+		var unreadable []string
 		for _, participant := range *r.Participants {
 			identity := participant.URN
 			if identity != "" {
 				canonical, err := CanonicalMemberURN(identity)
 				if err != nil {
+					unreadable = append(unreadable, activityURNNamespace(identity))
+					continue
+				}
+				identity = canonical
+			}
+			entity := strings.TrimPrefix(participant.EntityURN, "urn:li:msg_messagingParticipant:")
+			if canonical, err := CanonicalMemberURN(entity); err == nil {
+				if identity != "" && identity != canonical {
 					return nil, ErrIdentityUnavailable
 				}
 				identity = canonical
 			}
-			if participant.EntityURN != "" {
-				entity := strings.TrimPrefix(participant.EntityURN, "urn:li:msg_messagingParticipant:")
-				canonical, err := CanonicalMemberURN(entity)
-				if err == nil {
-					if identity != "" && identity != canonical {
-						return nil, ErrIdentityUnavailable
-					}
-					identity = canonical
-				}
+			if identity == "" {
+				unreadable = append(unreadable, activityURNNamespace(entity))
+				continue
 			}
-			canonical, err := CanonicalMemberURN(identity)
-			if err != nil {
-				return nil, ErrIdentityUnavailable
-			}
-			if participants[canonical] {
+			if participants[identity] {
 				return nil, ErrParseFailed
 			}
-			participants[canonical] = true
-			conv.Participants = append(conv.Participants, canonical)
+			participants[identity] = true
+			conv.Participants = append(conv.Participants, identity)
 		}
 		if !participants[sender] {
 			return nil, ErrSenderIdentityMismatch
 		}
+		// Skip the whole conversation: dropping one participant could make a
+		// group thread look like a two-person thread with a tracked member.
+		if len(unreadable) > 0 {
+			out.Skipped++
+			for _, kind := range unreadable {
+				kinds[kind] = true
+			}
+			continue
+		}
 		out.Conversations = append(out.Conversations, conv)
 	}
+	// A page of nothing but skips must not look like an empty, complete inbox.
+	if out.Skipped > 0 && len(out.Conversations) == 0 {
+		return nil, ErrIdentityUnavailable
+	}
+	out.SkippedKinds = slices.Sorted(maps.Keys(kinds))
+	if len(out.SkippedKinds) > maxSkippedKinds {
+		out.SkippedKinds = out.SkippedKinds[:maxSkippedKinds]
+	}
 	return out, nil
+}
+
+// activityURNNamespace returns only the namespace of urn:li:<namespace>:<id>, so
+// a skipped participant's identifier can never reach the host.
+func activityURNNamespace(raw string) string {
+	rest, ok := strings.CutPrefix(raw, "urn:li:")
+	if !ok {
+		return unknownSkippedKind
+	}
+	namespace, _, ok := strings.Cut(rest, ":")
+	if !ok || namespace == "" || len(namespace) > 64 {
+		return unknownSkippedKind
+	}
+	for _, r := range namespace {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+			return unknownSkippedKind
+		}
+	}
+	return namespace
 }
