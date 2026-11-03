@@ -21,9 +21,23 @@ After `GetMe` proves the expected canonical member:
 
 Activity reads accept ordinary GraphQL responses and normalized Voyager
 `data/data` envelopes with uniquely resolvable `included` references. They never
-return a partial successful page after a parse or identity failure. Hosts must
-persist partial progress themselves and must not infer delivery failure from
-an absent message.
+return a partial successful page after a parse or identity failure, with one
+exception below. Hosts must persist partial progress themselves and must not
+infer delivery failure from an absent message.
+
+`ListActivityConversations` can return a partial page. A conversation that has
+the sender but also a participant with no member identity, such as a company
+page or a deleted account, is left out whole and counted in `Skipped`.
+`SkippedKinds` lists at most 8 URN namespaces of those participants, such as
+`fsd_company`, or `unknown` when there is none, and never an identifier. Hosts
+must read `Skipped`: a thread absent from a page with a non-zero count may be one
+of the skipped ones. `NextCursor` and `Complete` still describe the traversal.
+
+The page still fails whole when a conversation lacks the sender
+(`ErrSenderIdentityMismatch`), when a participant's `hostIdentityUrn` and
+`entityUrn` name different members (`ErrIdentityUnavailable`), and when every
+conversation on a non-empty page is skipped (`ErrIdentityUnavailable`), so a
+provider format change cannot look like an empty inbox.
 
 Message kinds are `human`, `system` or `unknown`. Hosts should count only human
 inbound events, preserve provider message/conversation IDs, and deduplicate
@@ -36,8 +50,8 @@ should expose its consented, tenant-scoped stored activity through its own tools
 ## Validation status
 
 Offline fixture and race tests cover identity checks, normalized responses,
-cursor handling, system/unknown message classification and per-attempt request
-gating. A host refusal remains typed and proves that HTTP dispatch did not occur;
+cursor handling, skipped non-member conversations, system/unknown message
+classification and per-attempt request gating. A host refusal remains typed and proves that HTTP dispatch did not occur;
 read retries stop at that refusal and an unsafe write is not marked ambiguous.
 
 Early burner checks exposed parsing failures and a disposable test harness that

@@ -49,6 +49,10 @@ type ActivityConversationPage struct {
 	// Complete applies only to the requested method's traversal. The initial
 	// snapshot never proves full history; category pagination covers INBOX only.
 	Complete bool `json:"complete"`
+	// Skipped counts category conversations left out because another participant
+	// has no member identity. SkippedKinds names their URN namespaces, never IDs.
+	Skipped      int      `json:"skipped,omitempty"`
+	SkippedKinds []string `json:"skippedKinds,omitempty"`
 }
 type ActivityMessagePage struct {
 	Messages       []ActivityMessage `json:"messages"`

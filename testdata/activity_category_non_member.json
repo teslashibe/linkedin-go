@@ -1,0 +1,19 @@
+{
+  "data": {"data": {"messengerConversationsByCategoryQuery": {
+    "*elements": [
+      "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,member)",
+      "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,company)",
+      "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,nobody)"
+    ],
+    "metadata": {"nextCursor": "next:page=(2)&x"}
+  }}},
+  "included": [
+    {"entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,member)", "groupChat": false, "lastActivityAt": 1760000300000, "*conversationParticipants": ["urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ALPHA"]},
+    {"entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,company)", "groupChat": false, "lastActivityAt": 1760000200000, "*conversationParticipants": ["urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "urn:li:msg_messagingParticipant:company"]},
+    {"entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:SELF,nobody)", "groupChat": false, "lastActivityAt": 1760000100000, "*conversationParticipants": ["urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "urn:li:msg_messagingParticipant:DELETEDSECRET"]},
+    {"entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:SELF", "participantType": {"member": {"firstName": {"text": "Sender"}}}},
+    {"entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ALPHA", "participantType": {"member": {"firstName": {"text": "Recipient"}}}},
+    {"entityUrn": "urn:li:msg_messagingParticipant:company", "hostIdentityUrn": "urn:li:fsd_company:COMPANYSECRET", "participantType": {"organization": {"name": {"text": "Company"}}}},
+    {"entityUrn": "urn:li:msg_messagingParticipant:DELETEDSECRET", "participantType": {}}
+  ]
+}
