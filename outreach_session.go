@@ -2,6 +2,8 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync/atomic"
 )
 
@@ -285,4 +287,117 @@ func (p *PreparedComment) Send(ctx context.Context) (*PostComment, error) {
 	}
 	defer done()
 	return p.write.session.client.sendComment(bound, p.params, &p.target, p.write.session.identity.URN, func() error { return p.write.check(bound) })
+}
+
+// ConversationMessageParams is one message into a conversation that already
+// exists in the sender's own inbox, such as a reply to someone who wrote there
+// without being a first-degree connection. RecipientURN is the conversation's
+// other participant, as the host observed them write in it.
+type ConversationMessageParams struct {
+	ConversationURN   string
+	RecipientURN      string
+	ExpectedSenderURN string
+	Body              string
+}
+
+// PreparedConversationMessage binds one conversation of the verified sender,
+// its expected participant and an exact body to one Send.
+type PreparedConversationMessage struct {
+	write                   *preparedWrite
+	params                  ConversationMessageParams
+	conversation, recipient string
+}
+
+// PrepareConversationMessage checks the sender as PrepareMessage does and
+// binds the conversation, which must be the sender's own (its viewer-owned
+// msg_conversation URN). It reads nothing from LinkedIn and checks no
+// connection degree: the host supplies a conversation it observed the
+// recipient write in, and LinkedIn decides whether it accepts the message.
+func (s *OutreachSession) PrepareConversationMessage(ctx context.Context, p ConversationMessageParams) (*PreparedConversationMessage, error) {
+	bound, done, err := s.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if err := validateOutreachText(p.Body, MessageLimit); err != nil {
+		return nil, err
+	}
+	if err := s.requireSender(p.ExpectedSenderURN); err != nil {
+		return nil, err
+	}
+	recipient, err := CanonicalMemberURN(p.RecipientURN)
+	if err != nil || recipient == s.identity.URN {
+		return nil, ErrInvalidParams
+	}
+	if !strings.HasPrefix(p.ConversationURN, "urn:li:msg_conversation:(") || !receiptURN(p.ConversationURN, "urn:li:msg_conversation:") || receiptMember(p.ConversationURN) != s.identity.URN {
+		return nil, ErrInvalidParams
+	}
+	if err := s.check(bound); err != nil {
+		return nil, err
+	}
+	conversation := "urn:li:msg_conversation:(" + s.identity.URN + "," + strings.Split(strings.TrimSuffix(strings.TrimPrefix(p.ConversationURN, "urn:li:msg_conversation:("), ")"), ",")[1] + ")"
+	return &PreparedConversationMessage{write: &preparedWrite{session: s, ctx: ctx}, params: p, conversation: conversation, recipient: recipient}, nil
+}
+
+// Conversation returns the bound conversation in its viewer-owned form.
+func (p *PreparedConversationMessage) Conversation() string {
+	if p == nil {
+		return ""
+	}
+	return p.conversation
+}
+
+// Send posts the body into the bound conversation once. The receipt is the
+// created message and that same conversation; any other conversation, sender,
+// recipient or text in the acknowledgment leaves delivery unknown.
+func (p *PreparedConversationMessage) Send(ctx context.Context) (*MessageReceipt, error) {
+	if p == nil {
+		return nil, ErrInvalidParams
+	}
+	bound, done, err := p.write.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return p.write.session.client.sendConversationMessage(bound, p.params.Body, p.conversation, p.recipient, p.write.session.identity.URN, func() error { return p.write.check(bound) })
+}
+
+func (c *Client) sendConversationMessage(ctx context.Context, text, conversation, recipient, sender string, guard func() error) (*MessageReceipt, error) {
+	origin, tracking, err := messageToken()
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"message":    map[string]any{"body": map[string]any{"attributes": []any{}, "text": text}, "renderContentUnions": []any{}, "conversationUrn": conversation, "originToken": origin},
+		"mailboxUrn": sender, "trackingId": tracking, "dedupeByClientGeneratedToken": false,
+	})
+	body, _, err := c.makeGuardedWriteRequest(ctx, apiBase+"/voyagerMessagingDashMessengerMessages?action=createMessage", payload, guard)
+	if err != nil {
+		return nil, err
+	}
+	value, err := createdValue(body)
+	if err != nil {
+		return nil, unknownReceiptReason(writeUnknownCreationValue)
+	}
+	message, messageOK := selectMessagingReceipt(value, []string{"entityUrn", "backendUrn"}, sender, "urn:li:msg_message:", "urn:li:messagingMessage:")
+	created, conversationOK := selectMessagingReceipt(value, []string{"conversationUrn", "backendConversationUrn", "*conversation"}, sender, "urn:li:msg_conversation:", "urn:li:messagingThread:")
+	if !messageOK {
+		return nil, unknownReceiptReason(writeUnknownMessageReceipt)
+	}
+	if !conversationOK {
+		return nil, unknownReceiptReason(writeUnknownConversationReceipt)
+	}
+	if created != conversation {
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
+	}
+	if observed, exists := value["originToken"]; exists && observed != origin {
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
+	}
+	if detail := messageIdentityMismatch(value, sender, recipient); detail != "" {
+		return nil, &WriteError{Cause: ErrWriteUnknown, unknownReason: writeUnknownIdentityMismatch, unknownDetail: detail}
+	}
+	if observed, exists := value["body"]; exists && valueText(observed) != text {
+		return nil, unknownReceiptReason(writeUnknownRequestMismatch)
+	}
+	return &MessageReceipt{MessageURN: message, ConversationURN: created}, nil
 }
